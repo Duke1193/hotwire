@@ -81,3 +81,63 @@ export const COLORS = {
   lot: 0x6a6e79,
   grass: 0x4e7f57,
 };
+
+export const TRAFFIC = {
+  /** Cars kept alive around the player. */
+  count: 22,
+  /** Half the distance between the two lane centres of a road. */
+  lane: 46,
+  maxSpeed: 5.2,
+  recklessSpeed: 8.4,
+  accel: 0.1,
+  /** Chance a spawned driver is in a hurry. */
+  recklessChance: 0.14,
+  /** Look this far ahead for something to brake for. */
+  feeler: 96,
+  spawnMin: 700,
+  spawnMax: 1500,
+  despawn: 2100,
+  hornAfter: 2600,
+};
+
+export const PEDS = {
+  count: 82,
+  speed: 0.72,
+  runSpeed: 1.85,
+  /** Sidewalk waypoints are spaced roughly this far apart. */
+  nodeSpacing: 92,
+  /** Recycle anyone further away than this. */
+  despawn: 1250,
+  spawnMin: 620,
+  spawnMax: 1150,
+  /** A vehicle this close and this fast makes them bolt. */
+  scareDist: 86,
+  scareSpeed: 2.4,
+};
+
+export const AMBIENT = {
+  minGap: 30000,
+  maxGap: 60000,
+  /** Events are staged this far from the player: close enough to notice. */
+  nearMin: 420,
+  nearMax: 1250,
+};
+
+export const SCORE = {
+  escape: [0, 400, 900, 1600],
+  jobBase: 600,
+  jobPerMetre: 0.9,
+  /** Points per second of sustained high-speed driving. */
+  streakRate: 55,
+  streakSpeed: 0.72,
+  heatRunWin: 2000,
+};
+
+export const NET = {
+  /** Transform broadcasts per second while moving. */
+  sendHz: 12,
+  idleHz: 2,
+  /** Render remote players this far in the past so we always interpolate. */
+  interpDelay: 130,
+  staleAfter: 9000,
+};

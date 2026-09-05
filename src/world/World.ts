@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS, WORLD } from '../config';
+import { LaneGrid, WalkGraph } from './Graphs';
 
 export interface Rect {
   x: number;
@@ -42,6 +43,11 @@ export class World {
   /** Baked ground layer. Skid marks get stamped straight into it. */
   ground!: Phaser.GameObjects.RenderTexture;
 
+  /** Road grid used by traffic, and the sidewalk waypoints used by pedestrians. */
+  readonly lanes = new LaneGrid();
+  walk!: WalkGraph;
+  blocks: Rect[] = [];
+
   private rng = new Phaser.Math.RandomDataGenerator([WORLD.seed]);
 
   build(scene: Phaser.Scene) {
@@ -64,6 +70,7 @@ export class World {
 
     this.spawnProps(scene);
     this.createBodies(scene);
+    this.walk = new WalkGraph(this.blocks);
   }
 
   // ---------------------------------------------------------------- layout
@@ -101,8 +108,6 @@ export class World {
       for (let x = 140; x < this.width - 140; x += 160) this.roadPoints.push(new Phaser.Math.Vector2(x, ry));
     }
   }
-
-  private blocks: Rect[] = [];
 
   // ---------------------------------------------------------------- paint
 

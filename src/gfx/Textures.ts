@@ -30,6 +30,33 @@ export const POLICE_SKIN: CarSkin = {
 
 const PAD = 8;
 
+/** Index 0 is the local player; the rest are pedestrian variations. */
+export const PED_JACKETS = [
+  { coat: 0x47a0c4, shade: 0x2f7c9c, hair: 0x33383f },
+  { coat: 0xc4715a, shade: 0x9c5544, hair: 0x2b2118 },
+  { coat: 0x8f9aa8, shade: 0x6f7a88, hair: 0x413a33 },
+  { coat: 0x6fae7a, shade: 0x51895c, hair: 0x2f2a24 },
+  { coat: 0xb99a54, shade: 0x94793d, hair: 0x3a2f22 },
+  { coat: 0x9b7fc0, shade: 0x7a61a0, hair: 0x2a2530 },
+];
+
+function drawPed(g: Phaser.GameObjects.Graphics, coat: number, shade: number, hair: number) {
+  g.fillStyle(0x14161b, 1);
+  g.fillRoundedRect(6, 7, 18, 16, 7);
+  g.fillStyle(coat, 1);
+  g.fillRoundedRect(7.2, 8.2, 15.6, 13.6, 6);
+  g.fillStyle(shade, 1);
+  g.fillRect(7.2, 14, 15.6, 2.4);
+  g.fillStyle(0x14161b, 1);
+  g.fillCircle(16.5, 15, 6.2);
+  g.fillStyle(0xe8bb92, 1);
+  g.fillCircle(16.5, 15, 5);
+  g.fillStyle(hair, 1);
+  g.fillCircle(14.6, 15, 4.2);
+  g.fillStyle(0xfff3d4, 0.95);
+  g.fillCircle(20.2, 15, 1.7);
+}
+
 function roundRect(
   g: Phaser.GameObjects.Graphics,
   x: number,
@@ -107,22 +134,31 @@ export function buildTextures(scene: Phaser.Scene) {
     drawCar(g, POLICE_SKIN, true),
   );
 
-  // pedestrian, nose along +X
-  make(scene, 'ped', 30, 30, (g) => {
-    g.fillStyle(0x14161b, 1);
-    g.fillRoundedRect(6, 7, 18, 16, 7);
-    g.fillStyle(0x47a0c4, 1);
-    g.fillRoundedRect(7.2, 8.2, 15.6, 13.6, 6);
-    g.fillStyle(0x2f7c9c, 1);
-    g.fillRect(7.2, 14, 15.6, 2.4);
-    g.fillStyle(0x14161b, 1);
-    g.fillCircle(16.5, 15, 6.2);
-    g.fillStyle(0xe8bb92, 1);
-    g.fillCircle(16.5, 15, 5);
-    g.fillStyle(0x33383f, 1);
-    g.fillCircle(14.6, 15, 4.2);
-    g.fillStyle(0xfff3d4, 0.95);
-    g.fillCircle(20.2, 15, 1.7);
+  // pedestrians, nose along +X. One texture per jacket so NPCs read apart.
+  PED_JACKETS.forEach((jacket, i) => {
+    make(scene, i === 0 ? 'ped' : `ped-${i}`, 30, 30, (g) => drawPed(g, jacket.coat, jacket.shade, jacket.hair));
+  });
+
+  // job pickup / dropoff ring
+  make(scene, 'marker', 96, 96, (g) => {
+    g.lineStyle(7, 0xffffff, 0.95);
+    g.strokeCircle(48, 48, 40);
+    g.lineStyle(3, 0xffffff, 0.5);
+    g.strokeCircle(48, 48, 30);
+    g.fillStyle(0xffffff, 0.14);
+    g.fillCircle(48, 48, 27);
+  });
+
+  // small pointer used for off-screen job direction and remote-player tags
+  make(scene, 'chev', 20, 20, (g) => {
+    g.fillStyle(0xffffff, 1);
+    g.beginPath();
+    g.moveTo(18, 10);
+    g.lineTo(4, 3);
+    g.lineTo(7, 10);
+    g.lineTo(4, 17);
+    g.closePath();
+    g.fillPath();
   });
 
   // soft round particle

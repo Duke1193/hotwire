@@ -4,3 +4,13 @@
 
 [build.environment]
   NODE_VERSION = "20"
+
+# Multiplayer needs these set in the Netlify UI (Site settings > Environment
+# variables). Without them the site still builds and plays single player.
+#   VITE_SUPABASE_URL
+#   VITE_SUPABASE_ANON_KEY
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

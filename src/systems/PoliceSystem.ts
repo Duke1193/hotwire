@@ -20,7 +20,9 @@ export class PoliceSystem {
   nearestDist = Infinity;
 
   private spawnCooldown = 0;
+  private standDownMs = 0;
   private target = new Phaser.Math.Vector2();
+  private away = new Phaser.Math.Vector2();
 
   constructor(private scene: Phaser.Scene, private world: World, private heat: HeatSystem) {}
 
@@ -45,6 +47,11 @@ export class PoliceSystem {
       this.spawnCooldown = 1500;
     }
 
+    // Once the heat is gone the units stop hunting and clear the area, so a
+    // finished chase can actually finish.
+    const standDown = this.heat.value <= 0;
+    this.standDownMs = standDown ? this.standDownMs + dtMs : 0;
+
     // aim slightly ahead of where the player is going
     this.target.set(playerPos.x + playerVel.x * 16, playerPos.y + playerVel.y * 16);
 
@@ -55,7 +62,13 @@ export class PoliceSystem {
       const dist = Phaser.Math.Distance.Between(v.x, v.y, playerPos.x, playerPos.y);
       this.nearestDist = Math.min(this.nearestDist, dist);
 
-      v.controls = p.driver.control(v, this.target, dtMs);
+      if (standDown) {
+        // head away from the player rather than orbiting them forever
+        this.away.set(v.x + (v.x - playerPos.x) * 3, v.y + (v.y - playerPos.y) * 3);
+        v.controls = p.driver.control(v, this.away, dtMs);
+      } else {
+        v.controls = p.driver.control(v, this.target, dtMs);
+      }
       v.update(dtScale);
 
       p.blink += dtMs;
@@ -65,7 +78,7 @@ export class PoliceSystem {
       p.lightA.setPosition(v.x - s * 7, v.y + c * 7).setAlpha(on ? 0.95 : 0.12);
       p.lightB.setPosition(v.x + s * 7, v.y - c * 7).setAlpha(on ? 0.12 : 0.95);
 
-      const giveUp = this.heat.value <= 0 && dist > 900;
+      const giveUp = standDown && (dist > 700 || this.standDownMs > 5200);
       if (dist > POLICE.despawnDist || giveUp || this.patrols.length > want + 1) {
         this.remove(i);
       }

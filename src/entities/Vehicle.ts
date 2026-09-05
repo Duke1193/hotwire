@@ -40,6 +40,8 @@ export class Vehicle {
   occupied = false;
   /** When false the car is a loose prop: no steering input, just drag. */
   controlled = false;
+  /** Set on destroy so any list still holding this car can skip it. */
+  dead = false;
 
   private stuckMs = 0;
   private lastX = 0;
@@ -205,6 +207,7 @@ export class Vehicle {
   }
 
   destroy() {
+    this.dead = true;
     this.shadow.destroy();
     this.sprite.destroy();
   }

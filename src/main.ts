@@ -1,9 +1,13 @@
 import Phaser from 'phaser';
+import { bootSession } from './session';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
 
 const parent = document.getElementById('game')!;
+
+// Resolves the room, asks for a nickname if needed, opens the realtime channel.
+bootSession();
 
 /** Some embedders report 0 for the viewport on first paint, so clamp. */
 function viewport(): { w: number; h: number } {

@@ -80,3 +80,42 @@ export class AIDriver {
     return c;
   }
 }
+
+/**
+ * Ambient traffic. Aims at the next lane point, keeps a gap to whatever is in
+ * front, and slows for police. No traffic lights, no right-of-way: enough
+ * behaviour to read as a working street, not a simulation.
+ */
+export class TrafficDriver {
+  readonly controls: Controls = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+
+  control(self: Vehicle, tx: number, ty: number, gap: number, desired: number): Controls {
+    const c = this.controls;
+    const delta = angleDelta(self.rotation, Math.atan2(ty - self.y, tx - self.x));
+    const align = clamp(1 - Math.abs(delta) / 1.6, 0, 1);
+    const speed = self.forwardSpeed;
+
+    let throttle = speed < desired ? 0.45 + align * 0.55 : 0;
+    let brake = 0;
+
+    if (speed > desired * 1.12) brake = 0.32;
+    if (gap < 62) {
+      throttle = 0;
+      brake = 1;
+    } else if (gap < 118) {
+      throttle = 0;
+      brake = 0.45;
+    }
+    // slow down for a corner rather than understeering into the kerb
+    if (Math.abs(delta) > 0.7 && speed > desired * 0.55) {
+      throttle *= 0.3;
+      brake = Math.max(brake, 0.28);
+    }
+
+    c.throttle = throttle;
+    c.brake = brake;
+    c.steer = clamp(delta * 2.1, -1, 1);
+    c.handbrake = false;
+    return c;
+  }
+}
