@@ -312,6 +312,13 @@ export class AudioBus {
     if (heavy) this.blip(70, 0.26, 0.07, pan, 'sawtooth');
   }
 
+  /** Short, dry report; the shotgun gets a heavier body. */
+  gunshot(heavy: boolean, pan = 0, distance = 0) {
+    const vol = (heavy ? 0.075 : 0.05) * falloff(distance);
+    this.burst(heavy ? 0.17 : 0.09, vol, pan, heavy ? 620 : 1500, heavy ? 1.1 : 2.2);
+    if (heavy) this.blip(90, 0.12, vol * 0.7, pan, 'sawtooth');
+  }
+
   shout(pan = 0, distance = 0) {
     const now = performance.now();
     if (now - this.lastShout < 900) return;

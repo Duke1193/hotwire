@@ -1,7 +1,12 @@
 export interface PresenceInfo {
   playerId: string;
   nickname: string;
+  /** Optional X handle, without the @. */
+  handle?: string;
+  crewTag?: string;
+  crewName?: string;
   score: number;
+  kills: number;
   heat: number;
   updatedAt: number;
 }

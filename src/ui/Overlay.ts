@@ -1,73 +1,155 @@
 import './overlay.css';
 import type { NetStatus } from '../net/Transport';
 import type { RoomInfo } from '../net/Room';
+import type { Crew } from '../systems/Crew';
+import type { Objective } from '../systems/Objectives';
 import { hasTouch } from '../util/device';
 
 export interface RosterEntry {
   name: string;
+  handle?: string;
+  crewTag?: string;
   score: number;
+  kills: number;
   self: boolean;
 }
 
+export interface CrewRow {
+  tag: string;
+  name: string;
+  points: number;
+  accent: number;
+}
+
+const DESKTOP_CONTROLS: [string, string][] = [
+  ['W A S D', 'MOVE / DRIVE'],
+  ['E', 'ENTER / EXIT VEHICLE'],
+  ['SPACE', 'HANDBRAKE'],
+  ['MOUSE', 'AIM'],
+  ['CLICK', 'FIRE'],
+  ['TAB', 'SCOREBOARD'],
+  ['ESC', 'SETTINGS'],
+];
+
+const TOUCH_CONTROLS: [string, string][] = [
+  ['LEFT STICK', 'MOVE / STEER'],
+  ['GO', 'ACCELERATE'],
+  ['BRAKE', 'BRAKE / REVERSE'],
+  ['DRIFT', 'HANDBRAKE'],
+  ['ENTER / EXIT', 'CONTEXT ACTION'],
+  ['FIRE', 'SHOOT ON FOOT'],
+];
+
 /**
- * Everything that is not the game itself: nickname, room, invite, roster.
- * Plain DOM on purpose — it costs the renderer nothing and it is the part
- * players need to be able to select, tap and read.
+ * Everything that is not the game itself.
+ *
+ * The DOM owns the whole top-right column — room, invite, settings and the
+ * persistent objective card — while the canvas owns the top-left meters and
+ * the bottom-right speed. Splitting the screen by owner is what keeps the
+ * speed readout and the objective from ever landing on top of each other.
  */
 export class Overlay {
-  onPlay: ((nickname: string) => void) | null = null;
+  onPlay: ((nickname: string, handle: string) => void) | null = null;
+  onContinue: (() => void) | null = null;
+  onNewRun: (() => void) | null = null;
   onInvite: (() => void) | null = null;
   onSound: ((muted: boolean) => void) | null = null;
   onHeatRun: (() => void) | null = null;
-  onContinue: (() => void) | null = null;
-  onNewRun: (() => void) | null = null;
+  onCrewWar: (() => void) | null = null;
   onAnalyticsChoice: ((enabled: boolean) => void) | null = null;
+  onIdentityChange: ((nickname: string, handle: string) => void) | null = null;
+  onCrewChange: ((name: string, tag: string) => void) | null = null;
+  onCrewLeave: (() => void) | null = null;
+  onScoreboardOpen: (() => void) | null = null;
+  onSettingsOpen: (() => void) | null = null;
 
   private root: HTMLDivElement;
-  private boot: HTMLDivElement;
-  private input: HTMLInputElement;
-  private error: HTMLParagraphElement;
-  private roomChip: HTMLDivElement;
-  private roomLabel: HTMLSpanElement;
-  private onlineLabel: HTMLElement;
-  private inviteBtn: HTMLButtonElement;
-  private soundBtn: HTMLButtonElement;
-  private panel: HTMLDivElement;
-  private rows: HTMLDivElement;
-  private toasts: HTMLDivElement;
-  private nudge: HTMLDivElement;
-  private nudgeText: HTMLParagraphElement;
-  private rotate!: HTMLDivElement;
+  private q<T extends HTMLElement>(id: string): T {
+    return this.root.querySelector(`#${id}`) as T;
+  }
+
+  private boot!: HTMLDivElement;
   private bootNew!: HTMLDivElement;
   private bootResume!: HTMLDivElement;
-  private privacyPanel!: HTMLDivElement;
+  private nickInput!: HTMLInputElement;
+  private handleInput!: HTMLInputElement;
+  private error!: HTMLElement;
+  private roomChip!: HTMLDivElement;
+  private roomLabel!: HTMLElement;
+  private onlineLabel!: HTMLElement;
+  private inviteBtn!: HTMLButtonElement;
+  private soundBtn!: HTMLButtonElement;
+  private board!: HTMLDivElement;
+  private playerRows!: HTMLDivElement;
+  private crewRows!: HTMLDivElement;
+  private objective!: HTMLDivElement;
+  private feed!: HTMLDivElement;
+  private toasts!: HTMLDivElement;
+  private nudge!: HTMLDivElement;
+  private nudgeText!: HTMLElement;
+  private rotate!: HTMLDivElement;
+  private settings!: HTMLDivElement;
   private analyticsToggle!: HTMLButtonElement;
-  private privacyNote!: HTMLParagraphElement;
+  private privacyNote!: HTMLElement;
   private diag!: HTMLDivElement;
+  private crewState!: HTMLDivElement;
+  private crewNameInput!: HTMLInputElement;
+  private crewTagInput!: HTMLInputElement;
+  private setNickInput!: HTMLInputElement;
+  private setHandleInput!: HTMLInputElement;
+  private settingsObjective!: HTMLElement;
+  private settingsRoom!: HTMLElement;
 
   constructor(muted: boolean) {
     this.root = document.createElement('div');
     this.root.className = 'gw-root';
-    this.root.innerHTML = `
-      <div class="gw-hud">
-        <div class="gw-chip" id="gw-room" data-status="offline" title="Players in this city">
-          <span class="gw-dot"></span><span id="gw-roomcode">ROOM ····</span><b id="gw-online">OFFLINE</b>
+    this.root.innerHTML = this.markup();
+    document.body.appendChild(this.root);
+    this.bind();
+    this.setMuted(muted);
+    this.renderControls();
+  }
+
+  // ------------------------------------------------------------------ markup
+
+  private markup(): string {
+    return `
+      <div class="gw-column">
+        <div class="gw-hud">
+          <div class="gw-chip" id="gw-room" data-status="offline" title="Scoreboard">
+            <span class="gw-dot"></span><span id="gw-roomcode">ROOM ····</span><b id="gw-online">OFFLINE</b>
+          </div>
+          <button class="gw-btn" id="gw-invite">INVITE</button>
+          <button class="gw-icon" id="gw-sound" title="Sound"></button>
+          <button class="gw-icon" id="gw-settings-btn" title="Settings and help">☰</button>
         </div>
-        <button class="gw-btn" id="gw-invite">INVITE</button>
-        <button class="gw-icon" id="gw-sound" title="Sound"></button>
-        <button class="gw-btn gw-quiet" id="gw-privacy" title="Privacy &amp; analytics">PRIVACY</button>
+        <div class="gw-objective gw-hidden" id="gw-objective">
+          <h4 id="gw-obj-title">FREE ROAM</h4>
+          <p id="gw-obj-line">Find a job</p>
+          <div class="gw-obj-meta"><span id="gw-obj-distance"></span><span id="gw-obj-timer"></span></div>
+          <div class="gw-obj-extra gw-hidden" id="gw-obj-extra"></div>
+        </div>
+        <div class="gw-feed" id="gw-feed"></div>
+      <div class="gw-panel gw-hidden" id="gw-board">
+        <h3>PLAYERS</h3>
+        <div id="gw-player-rows"></div>
+        <h3 class="gw-crews-head">CREWS</h3>
+        <div id="gw-crew-rows"></div>
+        <div class="gw-panel-actions">
+          <button class="gw-run" id="gw-heatrun">START HEAT RUN</button>
+          <button class="gw-run gw-war" id="gw-crewwar">START CREW WAR</button>
+        </div>
       </div>
-      <div class="gw-panel gw-hidden" id="gw-panel">
-        <h3>IN THIS CITY</h3>
-        <div id="gw-rows"></div>
-        <button class="gw-run" id="gw-run">START HEAT RUN</button>
       </div>
+
       <div class="gw-toasts" id="gw-toasts"></div>
+
       <div class="gw-nudge gw-hidden" id="gw-nudge">
         <p id="gw-nudge-text">THAT WAS CLOSE.</p>
         <button id="gw-nudge-invite">INVITE A FRIEND</button>
         <button class="gw-x" id="gw-nudge-close">✕</button>
       </div>
+
       <div class="gw-rotate gw-hidden" id="gw-rotate">
         <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
           <rect x="20" y="6" width="24" height="42" rx="4" stroke="#69d8ff" stroke-width="2.5" />
@@ -79,13 +161,16 @@ export class Overlay {
         <p>ROTATE TO PLAY</p>
         <small>GETAWAY RUNS IN LANDSCAPE</small>
       </div>
+
       <div class="gw-boot gw-hidden" id="gw-boot">
         <div class="gw-boot-inner" id="gw-boot-new">
           <h1>GETAWAY</h1>
           <p class="gw-sub">enter the city.</p>
           <p class="gw-join gw-hidden" id="gw-joining"></p>
           <label for="gw-nick">NICKNAME</label>
-          <input id="gw-nick" maxlength="14" autocomplete="off" spellcheck="false" placeholder="" />
+          <input id="gw-nick" maxlength="14" autocomplete="off" spellcheck="false" />
+          <label for="gw-handle" class="gw-optional">X / TWITTER HANDLE <span>OPTIONAL</span></label>
+          <input id="gw-handle" maxlength="20" autocomplete="off" spellcheck="false" placeholder="@yourhandle" />
           <p class="gw-err" id="gw-err"></p>
           <button class="gw-play" id="gw-play">PLAY</button>
           <p class="gw-fine">no account · anonymous analytics · <button class="gw-link" data-privacy>PRIVACY</button></p>
@@ -102,201 +187,292 @@ export class Overlay {
           <p class="gw-fine">no account · anonymous analytics · <button class="gw-link" data-privacy>PRIVACY</button></p>
         </div>
       </div>
-      <div class="gw-privacy gw-hidden" id="gw-privacy-panel">
-        <div class="gw-privacy-inner">
-          <h2>PRIVACY</h2>
-          <ul>
-            <li>No account, no email, no password. Ever.</li>
-            <li>A random ID is kept in this browser so your run, score and room can persist. It never leaves your device except as an anonymous analytics id.</li>
-            <li>Your nickname is shown to players in your room. It is never sent to analytics.</li>
-            <li>Optional product analytics count anonymous gameplay events — what people do, where they stop — so the game can be improved. No session recording, no tracking across other sites.</li>
-            <li>Multiplayer works exactly the same whether analytics are on or off.</li>
-          </ul>
-          <div class="gw-toggle-row">
-            <span>PRODUCT ANALYTICS</span>
-            <button id="gw-analytics-toggle" class="gw-toggle" aria-pressed="true">ON</button>
-          </div>
-          <p class="gw-fine" id="gw-privacy-note"></p>
-          <button class="gw-play" id="gw-privacy-close">CLOSE</button>
+
+      <div class="gw-modal gw-hidden" id="gw-settings">
+        <div class="gw-modal-inner">
+          <div class="gw-modal-head"><h2>SETTINGS &amp; HELP</h2><button class="gw-x" id="gw-settings-close">✕</button></div>
+
+          <section><h3>CONTROLS</h3><div class="gw-keys" id="gw-controls"></div></section>
+
+          <section><h3>PLAYER</h3>
+            <div class="gw-field"><label for="gw-set-nick">NICKNAME</label><input id="gw-set-nick" maxlength="14" autocomplete="off" spellcheck="false" /></div>
+            <div class="gw-field"><label for="gw-set-handle">X / TWITTER</label><input id="gw-set-handle" maxlength="20" autocomplete="off" spellcheck="false" placeholder="@yourhandle" /></div>
+            <button class="gw-secondary" id="gw-save-player">SAVE PLAYER</button>
+          </section>
+
+          <section><h3>CREW</h3>
+            <p class="gw-state" id="gw-crew-state">NO CREW</p>
+            <div class="gw-field"><label for="gw-crew-name">CREW NAME</label><input id="gw-crew-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="REDLINE" /></div>
+            <div class="gw-field"><label for="gw-crew-tag">TAG</label><input id="gw-crew-tag" maxlength="3" autocomplete="off" spellcheck="false" placeholder="RDL" /></div>
+            <div class="gw-row-actions">
+              <button class="gw-secondary" id="gw-crew-save">CREATE / JOIN</button>
+              <button class="gw-secondary" id="gw-crew-leave">LEAVE</button>
+            </div>
+          </section>
+
+          <section><h3>ROOM</h3>
+            <p class="gw-state" id="gw-settings-room">—</p>
+            <button class="gw-secondary" id="gw-settings-invite">INVITE A FRIEND</button>
+          </section>
+
+          <section><h3>CURRENT OBJECTIVE</h3><p class="gw-state" id="gw-settings-objective">—</p></section>
+
+          <section><h3>AUDIO</h3>
+            <div class="gw-toggle-row"><span>SOUND</span><button id="gw-audio-toggle" class="gw-toggle" aria-pressed="true">ON</button></div>
+          </section>
+
+          <section id="gw-privacy-section"><h3>PRIVACY</h3>
+            <ul>
+              <li>No account, no email, no password. Ever.</li>
+              <li>A random ID is kept in this browser so your run, score and crew persist. It never leaves your device except as an anonymous analytics id.</li>
+              <li>Your nickname, X handle and crew are shown to players in your room. They are never sent to analytics.</li>
+              <li>Optional product analytics count anonymous gameplay events. No session recording, no tracking across other sites.</li>
+              <li>Multiplayer works exactly the same whether analytics are on or off.</li>
+            </ul>
+            <div class="gw-toggle-row"><span>PRODUCT ANALYTICS</span><button id="gw-analytics-toggle" class="gw-toggle" aria-pressed="true">ON</button></div>
+            <p class="gw-fine" id="gw-privacy-note"></p>
+          </section>
         </div>
       </div>
+
       <div class="gw-diag gw-hidden" id="gw-diag"></div>`;
-    document.body.appendChild(this.root);
+  }
 
-    const q = <T extends HTMLElement>(id: string) => this.root.querySelector(`#${id}`) as T;
-    this.boot = q('gw-boot');
-    this.input = q('gw-nick');
-    this.error = q('gw-err');
-    this.roomChip = q('gw-room');
-    this.roomLabel = q('gw-roomcode');
-    this.onlineLabel = q('gw-online');
-    this.inviteBtn = q('gw-invite');
-    this.soundBtn = q('gw-sound');
-    this.panel = q('gw-panel');
-    this.rows = q('gw-rows');
-    this.toasts = q('gw-toasts');
-    this.nudge = q('gw-nudge');
-    this.nudgeText = q('gw-nudge-text');
-    this.rotate = q('gw-rotate');
-    this.bootNew = q('gw-boot-new');
-    this.bootResume = q('gw-boot-resume');
-    this.privacyPanel = q('gw-privacy-panel');
-    this.analyticsToggle = q('gw-analytics-toggle');
-    this.privacyNote = q('gw-privacy-note');
-    this.diag = q('gw-diag');
-    this.watchOrientation();
+  // ------------------------------------------------------------------- bind
 
-    q('gw-continue').addEventListener('click', () => {
+  private bind() {
+    this.boot = this.q('gw-boot');
+    this.bootNew = this.q('gw-boot-new');
+    this.bootResume = this.q('gw-boot-resume');
+    this.nickInput = this.q('gw-nick');
+    this.handleInput = this.q('gw-handle');
+    this.error = this.q('gw-err');
+    this.roomChip = this.q('gw-room');
+    this.roomLabel = this.q('gw-roomcode');
+    this.onlineLabel = this.q('gw-online');
+    this.inviteBtn = this.q('gw-invite');
+    this.soundBtn = this.q('gw-sound');
+    this.board = this.q('gw-board');
+    this.playerRows = this.q('gw-player-rows');
+    this.crewRows = this.q('gw-crew-rows');
+    this.objective = this.q('gw-objective');
+    this.feed = this.q('gw-feed');
+    this.toasts = this.q('gw-toasts');
+    this.nudge = this.q('gw-nudge');
+    this.nudgeText = this.q('gw-nudge-text');
+    this.rotate = this.q('gw-rotate');
+    this.settings = this.q('gw-settings');
+    this.analyticsToggle = this.q('gw-analytics-toggle');
+    this.privacyNote = this.q('gw-privacy-note');
+    this.diag = this.q('gw-diag');
+    this.crewState = this.q('gw-crew-state');
+    this.crewNameInput = this.q('gw-crew-name');
+    this.crewTagInput = this.q('gw-crew-tag');
+    this.setNickInput = this.q('gw-set-nick');
+    this.setHandleInput = this.q('gw-set-handle');
+    this.settingsObjective = this.q('gw-settings-objective');
+    this.settingsRoom = this.q('gw-settings-room');
+
+    const submit = () => this.onPlay?.(this.nickInput.value, this.handleInput.value);
+    this.q('gw-play').addEventListener('click', submit);
+    for (const input of [this.nickInput, this.handleInput]) {
+      input.addEventListener('keydown', (e) => {
+        if ((e as KeyboardEvent).key === 'Enter') submit();
+        e.stopPropagation();
+      });
+    }
+    for (const input of [this.setNickInput, this.setHandleInput, this.crewNameInput, this.crewTagInput]) {
+      input.addEventListener('keydown', (e) => e.stopPropagation());
+    }
+
+    this.q('gw-continue').addEventListener('click', () => {
       this.hideBoot();
       this.onContinue?.();
     });
-    q('gw-newrun').addEventListener('click', () => {
+    this.q('gw-newrun').addEventListener('click', () => {
       this.hideBoot();
       this.onNewRun?.();
     });
-    this.root.querySelectorAll('[data-privacy]').forEach((link) => {
-      link.addEventListener('click', () => this.openPrivacy());
-    });
-    q('gw-privacy').addEventListener('click', () => this.openPrivacy());
-    q('gw-privacy-close').addEventListener('click', () => this.privacyPanel.classList.add('gw-hidden'));
-    this.analyticsToggle.addEventListener('click', () => {
-      const next = this.analyticsToggle.getAttribute('aria-pressed') !== 'true';
-      this.setAnalyticsState(next);
-      this.onAnalyticsChoice?.(next);
-    });
 
-    q('gw-play').addEventListener('click', () => this.submit());
-    this.input.addEventListener('keydown', (e) => {
-      if ((e as KeyboardEvent).key === 'Enter') this.submit();
-      e.stopPropagation();
-    });
     this.inviteBtn.addEventListener('click', () => this.onInvite?.());
-    q('gw-nudge-invite').addEventListener('click', () => {
+    this.q('gw-settings-invite').addEventListener('click', () => this.onInvite?.());
+    this.q('gw-nudge-invite').addEventListener('click', () => {
       this.onInvite?.();
       this.hideNudge();
     });
-    q('gw-nudge-close').addEventListener('click', () => this.hideNudge());
-    this.roomChip.addEventListener('click', () => this.panel.classList.toggle('gw-hidden'));
-    q('gw-run').addEventListener('click', () => this.onHeatRun?.());
-    this.soundBtn.addEventListener('click', () => {
-      const next = this.soundBtn.dataset.muted !== '1';
-      this.setMuted(next);
-      this.onSound?.(next);
+    this.q('gw-nudge-close').addEventListener('click', () => this.hideNudge());
+
+    this.roomChip.addEventListener('click', () => this.toggleScoreboard());
+    this.q('gw-heatrun').addEventListener('click', () => this.onHeatRun?.());
+    this.q('gw-crewwar').addEventListener('click', () => this.onCrewWar?.());
+
+    this.soundBtn.addEventListener('click', () => this.toggleSound());
+    this.q('gw-audio-toggle').addEventListener('click', () => this.toggleSound());
+
+    this.q('gw-settings-btn').addEventListener('click', () => this.openSettings());
+    this.settings.addEventListener('click', (e) => {
+      // clicking the backdrop closes; clicking the card does not
+      if (e.target === this.settings) this.closeSettings();
     });
-    this.setMuted(muted);
-    this.hidePrivacyLinkLabel();
+    this.settings.addEventListener('keydown', (e) => e.stopPropagation());
+    this.q('gw-settings-close').addEventListener('click', () => this.closeSettings());
+    this.q('gw-save-player').addEventListener('click', () =>
+      this.onIdentityChange?.(this.setNickInput.value, this.setHandleInput.value),
+    );
+    this.q('gw-crew-save').addEventListener('click', () =>
+      this.onCrewChange?.(this.crewNameInput.value, this.crewTagInput.value),
+    );
+    this.q('gw-crew-leave').addEventListener('click', () => this.onCrewLeave?.());
+
+    (this.root.querySelectorAll('[data-privacy]') as NodeListOf<HTMLElement>).forEach((link) =>
+      link.addEventListener('click', () => this.openSettings('gw-privacy-section')),
+    );
+    this.analyticsToggle.addEventListener('click', () => {
+      const next = this.analyticsToggle.getAttribute('aria-pressed') !== 'true';
+      this.onAnalyticsChoice?.(next);
+    });
+
+    this.watchOrientation();
   }
 
-  /**
-   * Landscape is the intended way to play on a phone. We cannot force it —
-   * the Screen Orientation lock API is not available to Safari here — so we
-   * ask, and get out of the way the moment the phone is turned.
-   */
-  private watchOrientation() {
-    if (!hasTouch) return;
-    const query = matchMedia('(orientation: portrait)');
-    const apply = () => this.rotate.classList.toggle('gw-hidden', !query.matches);
-    apply();
-    if (query.addEventListener) query.addEventListener('change', apply);
-    else query.addListener(apply);
-    window.addEventListener('orientationchange', () => window.setTimeout(apply, 150));
-    // Same belt-and-braces as the canvas sizing: Safari can miss the event.
-    window.setInterval(apply, 600);
-  }
-
-  // ------------------------------------------------------------ nickname
+  // ------------------------------------------------------------- boot screen
 
   showBoot(room: RoomInfo, suggested: string) {
+    this.bootNew.classList.remove('gw-hidden');
+    this.bootResume.classList.add('gw-hidden');
     this.boot.classList.remove('gw-hidden');
-    this.input.value = suggested;
+    this.nickInput.value = suggested;
     if (room.invited) {
-      const join = this.root.querySelector('#gw-joining') as HTMLElement;
-      join.textContent = room.host
-        ? `JOINING ${room.host.toUpperCase()}' CITY`
-        : `JOINING ROOM ${room.code}`;
+      const join = this.q('gw-joining');
+      join.textContent = room.host ? `JOINING ${room.host.toUpperCase()}' CITY` : `JOINING ROOM ${room.code}`;
       join.classList.remove('gw-hidden');
     }
-    window.setTimeout(() => this.input.focus(), 60);
+    window.setTimeout(() => this.nickInput.focus(), 60);
   }
 
-  private submit() {
-    const value = this.input.value;
-    this.error.textContent = '';
-    this.onPlay?.(value);
-  }
-
-  rejectNickname(message: string) {
-    this.error.textContent = message;
-    this.input.focus();
-  }
-
-  hideBoot() {
-    this.boot.classList.add('gw-hidden');
-  }
-
-  /** Returning player with a save: offer to pick the run back up. */
   showResume(info: { nickname: string; score: number; best: number }) {
     this.bootNew.classList.add('gw-hidden');
     this.bootResume.classList.remove('gw-hidden');
     this.boot.classList.remove('gw-hidden');
-    (this.root.querySelector('#gw-welcome') as HTMLElement).textContent =
-      `welcome back, ${info.nickname.toLowerCase()}.`;
-    (this.root.querySelector('#gw-resume-score') as HTMLElement).textContent = info.score.toLocaleString('en-US');
-    (this.root.querySelector('#gw-resume-best') as HTMLElement).textContent = info.best.toLocaleString('en-US');
+    this.q('gw-welcome').textContent = `welcome back, ${info.nickname.toLowerCase()}.`;
+    this.q('gw-resume-score').textContent = info.score.toLocaleString('en-US');
+    this.q('gw-resume-best').textContent = info.best.toLocaleString('en-US');
   }
 
-  // -------------------------------------------------------------- privacy
-
-  openPrivacy() {
-    this.privacyPanel.classList.remove('gw-hidden');
+  rejectNickname(message: string) {
+    this.error.textContent = message;
+    this.nickInput.focus();
   }
 
-  /**
-   * Reflects the current consent state. When analytics cannot run at all — no
-   * key compiled in, or the browser sends Do Not Track — the control is
-   * disabled rather than left looking broken when it does not respond.
-   */
-  setAnalyticsState(enabled: boolean, note = '', available = true) {
-    this.analyticsToggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-    this.analyticsToggle.textContent = enabled ? 'ON' : 'OFF';
-    this.analyticsToggle.disabled = !available;
-    this.privacyNote.textContent = note;
+  hideBoot() {
+    this.boot.classList.add('gw-hidden');
+    this.error.textContent = '';
   }
 
-  /** Development only: a small badge showing how this build is configured. */
-  setDiagnostics(text: string) {
-    this.diag.textContent = text;
-    this.diag.classList.toggle('gw-hidden', !text);
-  }
-
-  // ---------------------------------------------------------------- room
+  // ------------------------------------------------------------------- hud
 
   setRoom(code: string, online: number, status: NetStatus) {
     this.roomLabel.textContent = `ROOM ${code}`;
     this.onlineLabel.textContent = status === 'offline' ? 'OFFLINE' : `${online} ONLINE`;
     this.roomChip.dataset.status = status;
+    this.settingsRoom.textContent = status === 'offline' ? `${code} · SINGLE PLAYER` : `${code} · ${online} ONLINE`;
   }
 
-  setRoster(entries: RosterEntry[]) {
-    this.rows.textContent = '';
-    for (const entry of entries) {
+  setInviteLabel(label: string) {
+    if (this.inviteBtn.classList.contains('gw-copied')) return;
+    this.inviteBtn.textContent = label;
+  }
+
+  /** The persistent objective card, directly under the room cluster. */
+  setObjective(objective: Objective | null) {
+    if (!objective) {
+      this.objective.classList.add('gw-hidden');
+      this.settingsObjective.textContent = '—';
+      return;
+    }
+    this.objective.classList.remove('gw-hidden');
+    this.objective.dataset.kind = objective.kind;
+    this.q('gw-obj-title').textContent = objective.title;
+    this.q('gw-obj-line').textContent = objective.line;
+    this.q('gw-obj-distance').textContent =
+      objective.distance !== undefined ? `${Math.round(objective.distance)} M` : '';
+    this.q('gw-obj-timer').textContent =
+      objective.seconds !== undefined && objective.seconds >= 0 ? formatClock(objective.seconds) : '';
+    const extra = this.q('gw-obj-extra');
+    extra.textContent = objective.extra ?? '';
+    extra.classList.toggle('gw-hidden', !objective.extra);
+    this.settingsObjective.textContent = `${objective.title} — ${objective.line}`;
+  }
+
+  setRoster(players: RosterEntry[], crews: CrewRow[]) {
+    this.playerRows.textContent = '';
+    for (const entry of players) {
       const row = document.createElement('div');
-      row.className = `gw-row${entry.self ? ' gw-me' : ''}`;
+      row.className = `gw-prow${entry.self ? ' gw-me' : ''}`;
+
+      const who = document.createElement('div');
+      who.className = 'gw-who';
       const name = document.createElement('span');
-      name.textContent = entry.name.toUpperCase();
+      name.className = 'gw-name';
+      name.textContent = `${entry.crewTag ? `[${entry.crewTag}] ` : ''}${entry.name.toUpperCase()}`;
+      who.appendChild(name);
+      if (entry.handle) {
+        const handle = document.createElement('small');
+        handle.textContent = `@${entry.handle}`;
+        who.appendChild(handle);
+      }
+
       const score = document.createElement('span');
+      score.className = 'gw-score';
       score.textContent = entry.score.toLocaleString('en-US');
-      row.append(name, score);
-      this.rows.appendChild(row);
+      const kills = document.createElement('span');
+      kills.className = 'gw-kills';
+      kills.textContent = `${entry.kills} K`;
+
+      row.append(who, score, kills);
+      this.playerRows.appendChild(row);
+    }
+
+    this.crewRows.textContent = '';
+    if (!crews.length) {
+      const empty = document.createElement('p');
+      empty.className = 'gw-state';
+      empty.textContent = 'NO CREWS YET';
+      this.crewRows.appendChild(empty);
+    }
+    for (const crew of crews) {
+      const row = document.createElement('div');
+      row.className = 'gw-crow';
+      const name = document.createElement('span');
+      name.textContent = `[${crew.tag}] ${crew.name}`;
+      name.style.color = `#${crew.accent.toString(16).padStart(6, '0')}`;
+      const points = document.createElement('span');
+      points.textContent = crew.points.toLocaleString('en-US');
+      row.append(name, points);
+      this.crewRows.appendChild(row);
     }
   }
 
-  // -------------------------------------------------------------- notices
+  /** Short, non-graphic elimination line. */
+  killFeed(text: string) {
+    const line = document.createElement('div');
+    line.className = 'gw-feed-line';
+    line.textContent = text;
+    this.feed.appendChild(line);
+    while (this.feed.childElementCount > 4) this.feed.removeChild(this.feed.firstChild!);
+    window.setTimeout(() => line.classList.add('gw-out'), 4200);
+    window.setTimeout(() => line.remove(), 4800);
+  }
 
-  toast(text: string, ms = 2600) {
+  toast(text: string, ms = 2600, sub = '') {
     const el = document.createElement('div');
     el.className = 'gw-toast';
     el.textContent = text;
+    if (sub) {
+      const small = document.createElement('small');
+      small.textContent = sub;
+      el.appendChild(small);
+    }
     this.toasts.appendChild(el);
     window.setTimeout(() => el.classList.add('gw-out'), ms - 400);
     window.setTimeout(() => el.remove(), ms);
@@ -306,8 +482,8 @@ export class Overlay {
     this.inviteBtn.textContent = text;
     this.inviteBtn.classList.add('gw-copied');
     window.setTimeout(() => {
-      this.inviteBtn.textContent = 'INVITE';
       this.inviteBtn.classList.remove('gw-copied');
+      this.inviteBtn.textContent = 'INVITE';
     }, 2200);
   }
 
@@ -321,14 +497,101 @@ export class Overlay {
     this.nudge.classList.add('gw-hidden');
   }
 
-  private hidePrivacyLinkLabel() {
-    if (hasTouch) (this.root.querySelector('#gw-privacy') as HTMLElement).textContent = '\u{1F6E1}';
+  // --------------------------------------------------------------- panels
+
+  toggleScoreboard(force?: boolean) {
+    const open = force ?? this.board.classList.contains('gw-hidden');
+    this.board.classList.toggle('gw-hidden', !open);
+    if (open) this.onScoreboardOpen?.();
+  }
+
+  openSettings(scrollTo?: string) {
+    this.settings.classList.remove('gw-hidden');
+    this.onSettingsOpen?.();
+    if (scrollTo) this.q(scrollTo).scrollIntoView({ block: 'start' });
+  }
+
+  closeSettings() {
+    this.settings.classList.add('gw-hidden');
+  }
+
+  get settingsOpen() {
+    return !this.settings.classList.contains('gw-hidden');
+  }
+
+  /** Keeps the settings fields in step with the live identity and crew. */
+  setPlayerInfo(nickname: string, handle: string | undefined, crew: Crew | null) {
+    if (document.activeElement !== this.setNickInput) this.setNickInput.value = nickname;
+    if (document.activeElement !== this.setHandleInput) this.setHandleInput.value = handle ? `@${handle}` : '';
+    this.crewState.textContent = crew ? `[${crew.tag}] ${crew.name}` : 'NO CREW';
+    this.crewState.style.color = crew ? `#${crew.accent.toString(16).padStart(6, '0')}` : '';
+    if (crew && document.activeElement !== this.crewNameInput) {
+      this.crewNameInput.value = crew.name;
+      this.crewTagInput.value = crew.tag;
+    }
+    this.setInviteLabel(crew ? `JOIN [${crew.tag}]` : 'INVITE');
+  }
+
+  setAnalyticsState(enabled: boolean, note = '', available = true) {
+    this.analyticsToggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    this.analyticsToggle.textContent = enabled ? 'ON' : 'OFF';
+    this.analyticsToggle.disabled = !available;
+    this.privacyNote.textContent = note;
+  }
+
+  setDiagnostics(text: string) {
+    this.diag.textContent = text;
+    this.diag.classList.toggle('gw-hidden', !text);
+  }
+
+  private renderControls() {
+    const rows = hasTouch ? TOUCH_CONTROLS : DESKTOP_CONTROLS;
+    const host = this.q('gw-controls');
+    host.textContent = '';
+    for (const [key, what] of rows) {
+      const row = document.createElement('div');
+      const k = document.createElement('kbd');
+      k.textContent = key;
+      const v = document.createElement('span');
+      v.textContent = what;
+      row.append(k, v);
+      host.appendChild(row);
+    }
+  }
+
+  private toggleSound() {
+    const next = this.soundBtn.dataset.muted !== '1';
+    this.setMuted(next);
+    this.onSound?.(next);
   }
 
   private setMuted(muted: boolean) {
     this.soundBtn.dataset.muted = muted ? '1' : '0';
     this.soundBtn.textContent = muted ? '🔇' : '🔊';
+    const toggle = this.q<HTMLButtonElement>('gw-audio-toggle');
+    toggle.setAttribute('aria-pressed', muted ? 'false' : 'true');
+    toggle.textContent = muted ? 'OFF' : 'ON';
   }
+
+  /**
+   * Landscape is the intended way to play on a phone. We cannot force it, so
+   * we ask, and get out of the way the moment the phone is turned.
+   */
+  private watchOrientation() {
+    if (!hasTouch) return;
+    const query = matchMedia('(orientation: portrait)');
+    const apply = () => this.rotate.classList.toggle('gw-hidden', !query.matches);
+    apply();
+    if (query.addEventListener) query.addEventListener('change', apply);
+    else query.addListener(apply);
+    window.addEventListener('orientationchange', () => window.setTimeout(apply, 150));
+    window.setInterval(apply, 600);
+  }
+}
+
+function formatClock(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 let overlay: Overlay | null = null;

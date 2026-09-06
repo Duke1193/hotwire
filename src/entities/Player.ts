@@ -9,7 +9,7 @@ const ACCEL = 0.6;
 export class Player {
   readonly sprite: Phaser.Physics.Matter.Sprite;
   readonly shadow: Phaser.GameObjects.Image;
-  private facing = 0;
+  private facingAngle = 0;
   private bob = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
@@ -37,6 +37,17 @@ export class Player {
     return this.sprite.visible;
   }
 
+  /** Where the character is looking, in radians. */
+  get facing() {
+    return this.facingAngle;
+  }
+
+  /** px per physics step, matching Vehicle.speed. */
+  get speed() {
+    const body = this.sprite.body as MatterJS.BodyType | null;
+    return body ? Math.hypot(body.velocity.x, body.velocity.y) : 0;
+  }
+
   setActive(on: boolean, x = this.x, y = this.y) {
     this.sprite.setVisible(on);
     this.shadow.setVisible(on);
@@ -60,7 +71,7 @@ export class Player {
       const ny = iy / len;
       vx = lerp(vx, nx * WALK_SPEED, clamp(ACCEL * dtScale, 0, 1));
       vy = lerp(vy, ny * WALK_SPEED, clamp(ACCEL * dtScale, 0, 1));
-      this.facing = Phaser.Math.Angle.RotateTo(this.facing, Math.atan2(ny, nx), 0.35 * dtScale);
+      this.facingAngle = Phaser.Math.Angle.RotateTo(this.facingAngle, Math.atan2(ny, nx), 0.35 * dtScale);
       this.bob += dtScale * 0.32;
     } else {
       const d = decay(0.72, dtScale);
@@ -70,10 +81,10 @@ export class Player {
     }
 
     this.sprite.setVelocity(vx, vy);
-    this.sprite.setRotation(this.facing);
+    this.sprite.setRotation(this.facingAngle);
     const s = 1 + Math.sin(this.bob) * 0.06;
     this.sprite.setScale(BASE_SCALE * s, BASE_SCALE / s);
 
-    this.shadow.setPosition(this.x + 3, this.y + 5).setRotation(this.facing);
+    this.shadow.setPosition(this.x + 3, this.y + 5).setRotation(this.facingAngle);
   }
 }

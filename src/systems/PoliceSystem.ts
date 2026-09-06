@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { HEAT, POLICE } from '../config';
+import { ESCALATION, HEAT, POLICE } from '../config';
 import { Vehicle } from '../entities/Vehicle';
 import { POLICE_SKIN } from '../gfx/Textures';
 import { World } from '../world/World';
@@ -21,6 +21,8 @@ export class PoliceSystem {
 
   private spawnCooldown = 0;
   private standDownMs = 0;
+  /** 0-3, mirroring the HEAT level the player can see. */
+  private escalation = 0;
   private target = new Phaser.Math.Vector2();
   private away = new Phaser.Math.Vector2();
 
@@ -33,6 +35,15 @@ export class PoliceSystem {
   private desiredCount(): number {
     const lvl = this.heat.level;
     return lvl === 0 ? 0 : Math.min(lvl + (this.heat.value >= HEAT.max - 4 ? 1 : 0), 4);
+  }
+
+  /**
+   * Higher HEAT does not just mean more cars: the units that turn up are
+   * quicker and push harder, so escaping at level three genuinely costs more
+   * than escaping at level one.
+   */
+  setEscalation(level: number) {
+    this.escalation = Math.max(0, Math.min(level, ESCALATION.speed.length - 1));
   }
 
   update(dtMs: number, playerPos: Phaser.Math.Vector2, playerVel: Phaser.Math.Vector2, dtScale: number) {
@@ -69,6 +80,7 @@ export class PoliceSystem {
       } else {
         v.controls = p.driver.control(v, this.target, dtMs);
       }
+      v.tuning.maxSpeed = POLICE.maxSpeed * ESCALATION.speed[this.escalation];
       v.update(dtScale);
 
       p.blink += dtMs;
@@ -85,6 +97,14 @@ export class PoliceSystem {
     }
   }
 
+  /** Called when the chase ends abruptly — an arrest, or a reset. */
+  standDown() {
+    for (let i = this.patrols.length - 1; i >= 0; i--) this.remove(i);
+    this.spawnCooldown = 4000;
+    this.standDownMs = 0;
+    this.nearestDist = Infinity;
+  }
+
   private spawn(playerPos: Phaser.Math.Vector2) {
     const spot =
       this.world.pickRoadPoint(playerPos, POLICE.spawnMinDist, POLICE.spawnMaxDist) ??
@@ -93,7 +113,11 @@ export class PoliceSystem {
 
     const angle = Math.atan2(playerPos.y - spot.y, playerPos.x - spot.x);
     const v = new Vehicle(this.scene, spot.x, spot.y, angle, POLICE_SKIN, true);
-    v.tuning = { maxSpeed: POLICE.maxSpeed, accel: POLICE.accel, grip: 0.82 };
+    v.tuning = {
+      maxSpeed: POLICE.maxSpeed * ESCALATION.speed[this.escalation],
+      accel: POLICE.accel,
+      grip: 0.82,
+    };
     v.controlled = true;
 
     const lightA = this.scene.add
@@ -111,7 +135,7 @@ export class PoliceSystem {
 
     this.patrols.push({
       vehicle: v,
-      driver: new AIDriver(0.92 + Math.random() * 0.16),
+      driver: new AIDriver((0.92 + Math.random() * 0.16) * ESCALATION.aggression[this.escalation]),
       lightA,
       lightB,
       blink: Math.random() * 400,

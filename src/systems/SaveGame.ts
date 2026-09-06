@@ -1,4 +1,5 @@
 import { WORLD } from '../config';
+import { mergeStats, emptyStats, PlayerStats } from './Stats';
 
 /**
  * A small, versioned snapshot of the things a player would be annoyed to lose:
@@ -29,6 +30,10 @@ export interface SaveState {
   /** Bound to the local identity so one browser cannot resume another's run. */
   playerId: string;
   nickname: string;
+  handle?: string;
+  crewTag?: string;
+  crewName?: string;
+  stats?: PlayerStats;
   onboarded: boolean;
   muted: boolean;
   score: number;
@@ -89,6 +94,10 @@ export function readSave(playerId: string): SaveState | null {
       timestamp: data.timestamp,
       playerId,
       nickname: typeof data.nickname === 'string' ? data.nickname : '',
+      handle: typeof data.handle === 'string' ? data.handle : undefined,
+      crewTag: typeof data.crewTag === 'string' ? data.crewTag : undefined,
+      crewName: typeof data.crewName === 'string' ? data.crewName : undefined,
+      stats: mergeStats(emptyStats(), data.stats),
       onboarded: data.onboarded === true,
       muted: data.muted === true,
       score: Math.max(0, Math.round(data.score)),

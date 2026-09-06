@@ -407,6 +407,15 @@ export class World {
     scene.matter.world.setBounds(0, 0, this.width, this.height, 96);
   }
 
+  /** Cheap line-of-fire test: bullets stop at buildings, not at kerbs. */
+  blocksShot(x: number, y: number): boolean {
+    if (x < 0 || y < 0 || x > this.width || y > this.height) return true;
+    for (const b of this.buildings) {
+      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return true;
+    }
+    return false;
+  }
+
   /** A road point at least `min` px from `from`. */
   pickRoadPoint(from: Phaser.Math.Vector2, min: number, max: number): Phaser.Math.Vector2 | null {
     const options = this.roadPoints.filter((p) => {

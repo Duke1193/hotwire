@@ -27,6 +27,9 @@ npm run build
 | `W A S D` / arrows | walk, or drive (throttle / steer / brake + reverse) |
 | `E` | enter a car when the prompt shows; exit again at low speed |
 | `Space` | handbrake — hold it into a corner to slide |
+| mouse + click | aim and fire, on foot |
+| `Tab` | scoreboard |
+| `Esc` | settings and help |
 
 On a touch device the same actions come from a floating thumb stick on the
 left and pill buttons on the right — `ENTER` on foot, `GO` / `BRAKE` / `DRIFT`
@@ -51,6 +54,29 @@ marks stamped less often. The camera pulls back so the field of view roughly
 matches desktop rather than showing a magnified sliver of street. Subtle
 haptics fire on heavy collisions, pursuit escalation and completed jobs where
 the Vibration API exists (it does not on iOS, and is a no-op there).
+
+## Playing together
+
+Pick a nickname and, if you want, an X handle. Both float over your own
+character for the first twenty seconds so you can see how the room sees you,
+then fade; other people's names stay above them for good, because recognising
+who is who is the point.
+
+Crews are deliberately thin: a name, a three-letter tag and a colour, chosen
+locally and announced through the presence we already send. There is no crew
+server and no approval step — an invite link carries `?crew=RDL&crewname=…`
+and opening it joins you. `INVITE` becomes `JOIN [RDL]` once you are in one.
+
+**Crew War** is the only PvP mode: first crew to ten points, one point per
+elimination or job, two for a Heat Run win.
+
+On foot you can carry one of three weapons — SIDEARM, BURSTER or SCATTER —
+found in supply crates on block corners, alongside health and armour. Friendly
+fire is off inside a crew. Cars are cover: only players on foot can be hit.
+
+Getting caught is real now. If a patrol holds you at a standstill the BUSTED
+meter fills and you lose the pursuit, the job and a quarter of your score.
+Trading paint at speed never busts you; being boxed in when stopped will.
 
 ## Saving
 
@@ -108,14 +134,22 @@ own physics, its own police. Only **human players** are exchanged, at ~12
 updates per second, and remote players are drawn from an interpolation buffer
 ~130 ms in the past so they move smoothly.
 
-Two deliberate V1 compromises, both documented at the code:
+Three deliberate V1 compromises, all documented at the code:
+
+- **Shots are shooter-authoritative** (`src/systems/Combat.ts`). Your client
+  decides what your bullets hit, against the interpolated position it can see,
+  and tells the victim, who always applies the damage. That is trivially
+  cheatable and slightly unfair under lag. The alternative is an authoritative
+  server, which is explicitly out of scope; for a room you reach by sharing a
+  link with people you know, it is the right trade.
 
 - **Remote players do not collide** (`src/net/RemotePlayers.ts`). They are
   plain sprites with no Matter body. Networked vehicle collisions need shared
   authority over both cars; out of scope here.
-- **Heat Run has no referee** (`src/net/HeatRun.ts`). Each client believes the
-  first `win` message it receives, so a photo finish can be scored differently
-  on two machines. Acceptable for a social prototype.
+- **Heat Run and Crew War have no referee** (`src/net/HeatRun.ts`,
+  `src/net/CrewWar.ts`). Every client tallies the same broadcast events and
+  reaches the same total, but in a photo finish two machines can disagree
+  about who crossed first. Accepted for a social prototype.
 
 ## What is in the city
 
@@ -180,6 +214,11 @@ game_started → vehicle_entered → pursuit_escaped | mission_completed
 
 Milestones (`first_vehicle_entered`, `first_drive`, `first_pursuit_escaped`,
 `first_mission_completed`) fire once per session so cohorts are easy to slice.
+The crew and combat events — `crew_created`, `crew_joined`, `crew_left`,
+`crew_invite_clicked`, `weapon_picked_up`, `weapon_fired_first_time`,
+`player_killed`, `player_died`, `busted`, `crew_war_started`,
+`crew_war_completed`, `scoreboard_opened` — carry no nickname, handle or crew
+name, only anonymous ids and counters.
 
 ## Performance
 

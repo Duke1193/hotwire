@@ -3,12 +3,16 @@ import { readSupabaseConfig } from './net/env';
 import { inviteUrl, resolveRoom, RoomInfo } from './net/Room';
 import { Analytics, track } from './systems/Analytics';
 import { AudioBus } from './systems/Audio';
-import { Identity, loadIdentity, sanitizeNickname, saveIdentity } from './systems/Identity';
+import { Crew, crewFromUrl, loadCrew, makeCrew, saveCrew } from './systems/Crew';
+import { Identity, loadIdentity, sanitizeHandle, sanitizeNickname, saveIdentity } from './systems/Identity';
 import { clearSave, readBest, readSave, SaveState } from './systems/SaveGame';
 import { getOverlay, initOverlay, Overlay } from './ui/Overlay';
 
 export interface Session {
   identity: Identity;
+  crew: Crew | null;
+  /** Fired when the nickname, handle or crew changes at runtime. */
+  onProfileChange: (() => void) | null;
   room: RoomInfo;
   audio: AudioBus;
   overlay: Overlay;
@@ -80,17 +84,69 @@ export function bootSession() {
   }
 
   overlay.showBoot(room, '');
-  overlay.onPlay = (raw) => {
-    const check = sanitizeNickname(raw);
+  overlay.onPlay = (rawNick, rawHandle) => {
+    const check = sanitizeNickname(rawNick);
     if (!check.ok) {
       overlay.rejectNickname(check.error ?? 'TRY ANOTHER NAME');
       return;
     }
-    const identity = saveIdentity(check.value, null);
-    track('nickname_created');
+    const handle = sanitizeHandle(rawHandle);
+    if (!handle.ok) {
+      overlay.rejectNickname(handle.error ?? 'CHECK THE HANDLE');
+      return;
+    }
+    const identity = saveIdentity(check.value, null, handle.value);
+    track('nickname_created', { has_handle: Boolean(handle.value) });
     audio.start();
     overlay.hideBoot();
     finish(identity, room, audio, overlay, false, null);
+  };
+}
+
+/** Nickname, handle and crew edits from the settings panel. */
+function wireProfile(session: Session, overlay: Overlay) {
+  overlay.onIdentityChange = (rawNick, rawHandle) => {
+    const nick = sanitizeNickname(rawNick);
+    const handle = sanitizeHandle(rawHandle);
+    if (!nick.ok || !handle.ok) {
+      overlay.toast(nick.error ?? handle.error ?? 'CHECK THOSE DETAILS');
+      return;
+    }
+    session.identity = saveIdentity(nick.value, session.identity, handle.value);
+    session.net.setIdentity(session.identity);
+    overlay.setPlayerInfo(session.identity.nickname, session.identity.handle, session.crew);
+    overlay.toast('PROFILE SAVED');
+    session.onProfileChange?.();
+  };
+
+  overlay.onCrewChange = (rawName, rawTag) => {
+    const name = rawName.trim();
+    if (name.length < 2) {
+      overlay.toast('CREW NAME TOO SHORT');
+      return;
+    }
+    const existing = session.crew;
+    const crew = makeCrew(name, rawTag);
+    saveCrew(crew);
+    session.crew = crew;
+    session.net.meta.crewTag = crew.tag;
+    session.net.meta.crewName = crew.name;
+    overlay.setPlayerInfo(session.identity.nickname, session.identity.handle, crew);
+    overlay.toast(`[${crew.tag}] ${crew.name}`);
+    track(existing ? 'crew_joined' : 'crew_created', { via: 'settings' });
+    session.onProfileChange?.();
+  };
+
+  overlay.onCrewLeave = () => {
+    if (!session.crew) return;
+    saveCrew(null);
+    session.crew = null;
+    session.net.meta.crewTag = undefined;
+    session.net.meta.crewName = undefined;
+    overlay.setPlayerInfo(session.identity.nickname, session.identity.handle, null);
+    overlay.toast('LEFT CREW');
+    track('crew_left');
+    session.onProfileChange?.();
   };
 }
 
@@ -98,7 +154,7 @@ export function bootSession() {
 function wirePrivacy(overlay: Overlay) {
   const available = () => Analytics.configured && !Analytics.doNotTrack;
   const describe = () => {
-    if (!Analytics.configured) return 'This build has no analytics configured — nothing is being sent.';
+    if (!Analytics.configured) return 'No analytics are configured in this build — nothing is being sent.';
     if (Analytics.doNotTrack) return 'Your browser sends Do Not Track, so analytics stay off.';
     return 'Your choice is remembered on this device.';
   };
@@ -141,18 +197,37 @@ function finish(
 ) {
   const net = new MultiplayerSystem(identity, room.code);
 
+  // An invite link can carry a crew: joining it is the whole point of the link.
+  const invitedCrew = crewFromUrl();
+  const storedCrew = loadCrew();
+  const crew = invitedCrew ?? storedCrew;
+  if (invitedCrew && invitedCrew.tag !== storedCrew?.tag) {
+    saveCrew(invitedCrew);
+    track('crew_joined', { via: 'invite' });
+  }
+
   const session: Session = {
     identity,
+    crew,
+    onProfileChange: null,
     room,
     audio,
     overlay,
     net,
     resume,
-    invite: () => shareInvite(room, identity, overlay, net.status === 'offline'),
+    invite: () => shareInvite(room, session, overlay, net.status === 'offline'),
   };
+
+  net.meta.crewTag = crew?.tag;
+  net.meta.crewName = crew?.name;
+  wireProfile(session, overlay);
+  if (invitedCrew) {
+    overlay.toast(`JOINED [${invitedCrew.tag}]`, 3200, invitedCrew.name);
+  }
 
   overlay.onInvite = session.invite;
   overlay.setRoom(room.code, 1, 'offline');
+  overlay.setPlayerInfo(identity.nickname, identity.handle, crew);
 
   Analytics.identify(identity.id);
   Analytics.setContext({ room_id: room.code, nickname_set: true, multiplayer: false, online_player_count: 1 });
@@ -173,9 +248,10 @@ function finish(
  * Clipboard always wins; the native share sheet is only used where it is
  * actually the nicer interaction (touch devices).
  */
-function shareInvite(room: RoomInfo, identity: Identity, overlay: Overlay, offline: boolean) {
-  track('invite_clicked', { offline });
-  const url = inviteUrl(room.code, identity.nickname);
+function shareInvite(room: RoomInfo, session: Session, overlay: Overlay, offline: boolean) {
+  const crew = session.crew;
+  track(crew ? 'crew_invite_clicked' : 'invite_clicked', { offline });
+  const url = inviteUrl(room.code, session.identity.nickname, crew);
 
   const copied = () => {
     track('invite_copied');
@@ -204,7 +280,11 @@ function shareInvite(room: RoomInfo, identity: Identity, overlay: Overlay, offli
   const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
   if (touch && navigator.share) {
     navigator
-      .share({ title: 'GETAWAY', text: 'steal a car. lose the cops.', url })
+      .share({
+        title: 'GETAWAY',
+        text: crew ? `join [${crew.tag}] ${crew.name}` : 'steal a car. lose the cops.',
+        url,
+      })
       .then(() => track('invite_shared', { via: 'web_share' }))
       .catch(() => fallback());
     return;

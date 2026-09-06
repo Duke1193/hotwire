@@ -212,6 +212,52 @@ export function buildTextures(scene: Phaser.Scene) {
     g.fillCircle(11, 11, 3.2);
   });
 
+  // combat + pickups
+  make(scene, 'bullet', 12, 6, (g) => {
+    g.fillStyle(0xffffff, 0.28);
+    g.fillRoundedRect(0, 1, 12, 4, 2);
+    g.fillStyle(0xffffff, 1);
+    g.fillRoundedRect(4, 1.6, 8, 2.8, 1.4);
+  });
+
+  // supply crate: flat on the ground, banded lid, nothing spinning
+  make(scene, 'crate', 30, 30, (g) => {
+    g.fillStyle(0x000000, 0.3);
+    g.fillRoundedRect(4, 7, 24, 21, 3);
+    g.fillStyle(0x2b3140, 1);
+    g.fillRoundedRect(3, 4, 24, 22, 3);
+    g.fillStyle(0xffffff, 1);
+    g.fillRect(3, 12, 24, 5);
+    g.fillStyle(0x1b2029, 1);
+    g.fillRect(13, 4, 4, 22);
+    g.lineStyle(1.5, 0xffffff, 0.5);
+    g.strokeRoundedRect(3, 4, 24, 22, 3);
+  });
+
+  // soft ground light under a crate
+  make(scene, 'beacon', 72, 72, (g) => {
+    g.fillStyle(0xffffff, 0.1);
+    g.fillCircle(36, 36, 34);
+    g.fillStyle(0xffffff, 0.16);
+    g.fillCircle(36, 36, 22);
+    g.fillStyle(0xffffff, 0.3);
+    g.fillCircle(36, 36, 11);
+  });
+
+  // edge-of-screen navigation wedge, distinct from the in-world arrow
+  make(scene, 'wedge', 34, 34, (g) => {
+    g.fillStyle(0xffffff, 1);
+    g.beginPath();
+    g.moveTo(31, 17);
+    g.lineTo(7, 5);
+    g.lineTo(13, 17);
+    g.lineTo(7, 29);
+    g.closePath();
+    g.fillPath();
+    g.fillStyle(0x0b0e14, 0.85);
+    g.fillRect(3, 12, 4, 10);
+  });
+
   // on-screen thumb stick
   make(scene, 'stick-base', 200, 200, (g) => {
     g.fillStyle(0x0b0e14, 0.34);

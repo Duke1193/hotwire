@@ -5,7 +5,7 @@ import { clamp } from '../util/math';
 
 export type ControlMode = 'foot' | 'drive';
 
-type ButtonId = 'action' | 'throttle' | 'brake' | 'handbrake' | 'exit';
+type ButtonId = 'action' | 'fire' | 'throttle' | 'brake' | 'handbrake' | 'exit';
 
 interface Button {
   id: ButtonId;
@@ -44,6 +44,7 @@ export class TouchControls {
   private radius = 60;
   private mode: ControlMode = 'foot';
   private enabled = false;
+  private armed = false;
 
   constructor(private scene: Phaser.Scene, private scale: number) {
     // up to four fingers: stick, accelerate, brake, handbrake
@@ -60,6 +61,7 @@ export class TouchControls {
 
     for (const spec of [
       { id: 'action' as ButtonId, label: 'ENTER', accent: 0x69d8ff },
+      { id: 'fire' as ButtonId, label: 'FIRE', accent: 0xff6b5e },
       { id: 'throttle' as ButtonId, label: 'GO', accent: 0x69d8ff },
       { id: 'brake' as ButtonId, label: 'BRAKE', accent: 0xff8f6b },
       { id: 'handbrake' as ButtonId, label: 'DRIFT', accent: 0xffd257 },
@@ -85,6 +87,17 @@ export class TouchControls {
       });
       this.buttons[this.buttons.length - 1].text.setLetterSpacing?.(2);
     }
+  }
+
+  /** Top edge of the button cluster, so the HUD can stay clear of thumbs. */
+  get occludedTop(): number {
+    if (!this.enabled) return Number.POSITIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    for (const b of this.buttons) {
+      if (!this.visible(b.id)) continue;
+      top = Math.min(top, b.y);
+    }
+    return top;
   }
 
   setEnabled(on: boolean) {
@@ -165,6 +178,13 @@ export class TouchControls {
     action.x = w - marginR - bigW;
     action.y = h - marginB - bigH;
 
+    // FIRE sits where BRAKE does when driving, so the thumb never has to move.
+    const fire = this.find('fire');
+    fire.w = sideW;
+    fire.h = bigH * 0.62;
+    fire.x = action.x - gap - sideW;
+    fire.y = action.y + bigH - fire.h;
+
     for (const button of this.buttons) {
       this.draw(button);
       button.text.setPosition(button.x + button.w / 2, button.y + button.h / 2);
@@ -175,7 +195,7 @@ export class TouchControls {
   private applyMode() {
     if (!this.enabled) return;
     for (const button of this.buttons) {
-      const shown = this.mode === 'foot' ? button.id === 'action' : button.id !== 'action';
+      const shown = this.visible(button.id);
       button.g.setVisible(shown);
       button.text.setVisible(shown);
     }
@@ -183,6 +203,20 @@ export class TouchControls {
 
   private find(id: ButtonId): Button {
     return this.buttons.find((b) => b.id === id)!;
+  }
+
+  /** ENTER and FIRE on foot; the driving cluster in a car. */
+  private visible(id: ButtonId): boolean {
+    const onFoot = id === 'action' || id === 'fire';
+    if (this.mode === 'foot') return onFoot && (id !== 'fire' || this.armed);
+    return !onFoot;
+  }
+
+  /** FIRE only appears once the player is actually carrying something. */
+  setArmed(armed: boolean) {
+    if (this.armed === armed) return;
+    this.armed = armed;
+    this.applyMode();
   }
 
   private draw(button: Button) {
@@ -210,7 +244,7 @@ export class TouchControls {
 
     // 1. buttons: any finger inside a visible button counts as holding it
     for (const button of this.buttons) {
-      const shown = this.mode === 'foot' ? button.id === 'action' : button.id !== 'action';
+      const shown = this.visible(button.id);
       let down = false;
       if (shown) {
         for (const p of pointers) {
@@ -281,9 +315,14 @@ export class TouchControls {
       touchState.steer = clamp(nx * 1.35, -1, 1);
     }
 
+    this.publishButtons();
+  }
+
+  private publishButtons() {
     touchState.throttle = this.find('throttle').pressed ? 1 : 0;
     touchState.brake = this.find('brake').pressed ? 1 : 0;
     touchState.handbrake = this.find('handbrake').pressed;
+    touchState.firing = this.find('fire').pressed;
   }
 
   private overButton(p: Phaser.Input.Pointer): boolean {
@@ -298,8 +337,6 @@ export class TouchControls {
     this.base.setVisible(false);
     this.knob.setVisible(false);
     resetTouchState();
-    touchState.throttle = this.find('throttle').pressed ? 1 : 0;
-    touchState.brake = this.find('brake').pressed ? 1 : 0;
-    touchState.handbrake = this.find('handbrake').pressed;
+    this.publishButtons();
   }
 }

@@ -3,6 +3,8 @@ const KEY = 'getaway.identity';
 export interface Identity {
   id: string;
   nickname: string;
+  /** Optional X/Twitter handle, stored without the leading @. */
+  handle?: string;
 }
 
 /** Deliberately mild: this only stops the most obvious nonsense. */
@@ -30,20 +32,40 @@ export function sanitizeNickname(raw: string): { ok: boolean; value: string; err
   return { ok: true, value };
 }
 
+/**
+ * X/Twitter handles are optional. We accept a pasted @name, a bare name or a
+ * full profile URL, and keep only the handle itself.
+ */
+export function sanitizeHandle(raw: string): { ok: boolean; value?: string; error?: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: undefined };
+
+  const fromUrl = trimmed.match(/(?:twitter|x)\.com\/([^/?#]+)/i);
+  const candidate = (fromUrl ? fromUrl[1] : trimmed).replace(/^@+/, '');
+  const value = candidate.replace(/[^A-Za-z0-9_]/g, '').slice(0, 15);
+
+  if (!value) return { ok: false, error: 'LETTERS, NUMBERS AND _ ONLY' };
+  return { ok: true, value };
+}
+
 export function loadIdentity(): Identity | null {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<Identity>;
     if (!parsed.id || !parsed.nickname) return null;
-    return { id: parsed.id, nickname: parsed.nickname };
+    return {
+      id: parsed.id,
+      nickname: parsed.nickname,
+      handle: typeof parsed.handle === 'string' && parsed.handle ? parsed.handle : undefined,
+    };
   } catch {
     return null;
   }
 }
 
-export function saveIdentity(nickname: string, existing?: Identity | null): Identity {
-  const identity: Identity = { id: existing?.id ?? newId(), nickname };
+export function saveIdentity(nickname: string, existing?: Identity | null, handle?: string): Identity {
+  const identity: Identity = { id: existing?.id ?? newId(), nickname, handle: handle || undefined };
   try {
     localStorage.setItem(KEY, JSON.stringify(identity));
   } catch {

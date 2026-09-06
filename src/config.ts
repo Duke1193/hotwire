@@ -131,6 +131,8 @@ export const SCORE = {
   streakRate: 55,
   streakSpeed: 0.72,
   heatRunWin: 2000,
+  eliminate: 400,
+  crewWarWin: 1500,
 };
 
 export const NET = {
@@ -140,4 +142,61 @@ export const NET = {
   /** Render remote players this far in the past so we always interpolate. */
   interpDelay: 130,
   staleAfter: 9000,
+};
+
+export const VITALS = {
+  maxHealth: 100,
+  maxArmor: 100,
+  /** Seconds you cannot be hurt after respawning. */
+  spawnProtection: 3.5,
+  downTime: 2.6,
+  regenDelay: 9,
+  regenRate: 4,
+};
+
+export const COMBAT = {
+  /** Projectiles alive at once, pooled. */
+  poolSize: 64,
+  bulletLife: 900,
+  /** How close a shot has to pass to count as a hit. */
+  hitRadius: 16,
+};
+
+export const PICKUPS = {
+  /** Crates alive in the world at once. */
+  count: 18,
+  respawnMs: 42000,
+  radius: 34,
+};
+
+export const BUSTED = {
+  /** A patrol has to be this close to hold you. */
+  range: 96,
+  /** Above this speed you are getting away, not being arrested. */
+  escapeSpeed: 2.6,
+  /** Seconds of containment before capture. */
+  onFoot: 2.2,
+  inVehicle: 3.4,
+  /** Progress bleeds off this fast when you break contact. */
+  recover: 1.6,
+  scorePenalty: 0.25,
+  immunityMs: 6000,
+};
+
+export const CREW_WAR = {
+  target: 10,
+  killPoints: 1,
+  heatRunPoints: 2,
+  missionPoints: 1,
+  durationMs: 600000,
+  resultMs: 8000,
+};
+
+export const ESCALATION = {
+  /** Per HEAT level: how hard the response is. */
+  speed: [1, 1, 1.06, 1.14],
+  aggression: [1, 0.92, 1, 1.12],
+  /** Roadblocks appear at the top level only. */
+  roadblockLevel: 3,
+  roadblockCooldownMs: 26000,
 };

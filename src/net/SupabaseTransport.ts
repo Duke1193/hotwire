@@ -26,6 +26,9 @@ export class SupabaseTransport implements Transport {
   private events: TransportEvents | null = null;
   private self!: PresenceInfo;
   private room = '';
+  private reopenTimer = 0;
+  private retries = 0;
+  private closed = false;
 
   constructor(private url: string, private key: string) {}
 
@@ -42,6 +45,12 @@ export class SupabaseTransport implements Transport {
     }) as unknown as Client;
 
     this.open();
+
+    // A phone that locks its screen, or a tab left in the background, will
+    // have its socket dropped. Come back the moment the player does.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && !this.channel) this.reopen(0);
+    });
   }
 
   private open() {
@@ -64,8 +73,30 @@ export class SupabaseTransport implements Transport {
       };
       const next = map[status] ?? 'connecting';
       this.events?.onStatus(next);
-      if (status === 'SUBSCRIBED') void channel.track(this.self);
+
+      if (status === 'SUBSCRIBED') {
+        this.retries = 0;
+        void channel.track(this.self);
+        return;
+      }
+      if (next === 'offline' && !this.closed) {
+        // Backoff, then build a fresh channel: identity and crew ride along in
+        // `this.self`, so nothing is lost across a reconnect.
+        this.channel = null;
+        this.reopen(Math.min(1200 * 2 ** this.retries, 15000));
+        this.retries++;
+      }
     });
+  }
+
+  private reopen(delay: number) {
+    if (this.reopenTimer || this.closed || !this.client) return;
+    this.reopenTimer = window.setTimeout(() => {
+      this.reopenTimer = 0;
+      if (this.closed || !this.client || this.channel) return;
+      this.events?.onStatus('connecting');
+      this.open();
+    }, delay);
   }
 
   private relay(msg: unknown) {
@@ -86,7 +117,11 @@ export class SupabaseTransport implements Transport {
       peers.push({
         playerId: info.playerId,
         nickname: info.nickname ?? 'PLAYER',
+        handle: info.handle,
+        crewTag: info.crewTag,
+        crewName: info.crewName,
         score: info.score ?? 0,
+        kills: info.kills ?? 0,
         heat: info.heat ?? 0,
         updatedAt: info.updatedAt ?? Date.now(),
       });
@@ -109,6 +144,9 @@ export class SupabaseTransport implements Transport {
   }
 
   disconnect() {
+    this.closed = true;
+    window.clearTimeout(this.reopenTimer);
+    this.reopenTimer = 0;
     if (this.channel) {
       void this.channel.unsubscribe();
       this.client?.removeChannel(this.channel);

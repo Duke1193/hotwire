@@ -26,10 +26,10 @@ export class Jobs {
   onPickedUp: (() => void) | null = null;
   onFailed: (() => void) | null = null;
 
-  private target = new Phaser.Math.Vector2();
+  /** Where the objective is, for the navigation arrow. */
+  readonly target = new Phaser.Math.Vector2();
   private from = new Phaser.Math.Vector2();
   private marker: Phaser.GameObjects.Image;
-  private arrow: Phaser.GameObjects.Image;
   private cooldown = 3000;
   private pulse = 0;
   /** Jobs lapse if they are abandoned, so the marker never sits there forever. */
@@ -37,7 +37,6 @@ export class Jobs {
 
   constructor(scene: Phaser.Scene, private world: World, private score: ScoreSystem) {
     this.marker = scene.add.image(0, 0, 'marker').setDepth(7).setVisible(false).setAlpha(0.9);
-    this.arrow = scene.add.image(0, 0, 'chev').setDepth(30).setVisible(false).setScale(1.4);
   }
 
   /** What is worth restoring after a reload: the objective, not the timer. */
@@ -76,17 +75,6 @@ export class Jobs {
     const scale = 0.85 + Math.sin(this.pulse) * 0.12;
     this.marker.setScale(scale).setAlpha(0.55 + Math.sin(this.pulse) * 0.2);
     this.marker.setTint(this.state === 'offered' ? 0x69d8ff : 0xffd257);
-
-    if (this.distance > 260) {
-      const angle = Math.atan2(this.target.y - focus.y, this.target.x - focus.x);
-      this.arrow
-        .setVisible(true)
-        .setPosition(focus.x + Math.cos(angle) * 96, focus.y + Math.sin(angle) * 96)
-        .setRotation(angle)
-        .setTint(this.state === 'offered' ? 0x69d8ff : 0xffd257);
-    } else {
-      this.arrow.setVisible(false);
-    }
 
     if (this.distance < 74) {
       if (this.state === 'offered') this.pickUp(focus);
@@ -129,9 +117,14 @@ export class Jobs {
     this.label = '';
     this.cooldown = 6000;
     this.marker.setVisible(false);
-    this.arrow.setVisible(false);
     track('mission_completed', { points, kind: 'delivery' });
     this.onCompleted?.(points);
+  }
+
+  /** Dropped because the player was arrested or went down. */
+  abandon() {
+    if (this.state === 'off') return;
+    this.fail();
   }
 
   /** Abandoned for long enough: quietly drop it and offer another later. */
@@ -141,7 +134,6 @@ export class Jobs {
     this.label = '';
     this.cooldown = 8000;
     this.marker.setVisible(false);
-    this.arrow.setVisible(false);
     track('mission_failed', { kind: 'delivery', stage });
     this.onFailed?.();
   }

@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
-import { DRIVE, HEAT, WORLD } from '../config';
+import { BUSTED, CREW_WAR, DRIVE, HEAT, SCORE, VITALS, WORLD } from '../config';
 import { Player } from '../entities/Player';
 import { NEUTRAL, Vehicle } from '../entities/Vehicle';
 import { CAR_SKINS } from '../gfx/Textures';
+import { CrewWar } from '../net/CrewWar';
 import { HeatRun } from '../net/HeatRun';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { onSession, Session } from '../session';
@@ -15,8 +16,16 @@ import { Jobs } from '../systems/Jobs';
 import { Onboarding } from '../systems/Onboarding';
 import { Hazard, Pedestrians } from '../systems/Pedestrians';
 import { PoliceSystem } from '../systems/PoliceSystem';
+import { Capture } from '../systems/Busted';
+import { Combat, HitTarget, ShotWire, WeaponId, WEAPONS } from '../systems/Combat';
+import { Crew, crewAccent } from '../systems/Crew';
+import { Objectives } from '../systems/Objectives';
+import { ammoFor, Pickups, PickupKind } from '../systems/Pickups';
 import { ScoreSystem } from '../systems/Score';
 import { readBest, SAVE_VERSION, SaveScheduler, SaveState } from '../systems/SaveGame';
+import { emptyStats, mergeStats, PlayerStats } from '../systems/Stats';
+import { Vitals } from '../systems/Vitals';
+import { PlayerLabel } from '../ui/PlayerLabel';
 import { Traffic } from '../systems/Traffic';
 import { InputHub } from '../systems/Input';
 import { PlayerDriver } from '../systems/VehicleController';
@@ -46,6 +55,20 @@ export interface Hud {
   runSubtitle: string;
   /** False while the nickname overlay is still up. */
   live: boolean;
+  health: number;
+  armor: number;
+  protected: boolean;
+  weapon: string;
+  ammo: number;
+  capture: number;
+  captured: boolean;
+  downed: boolean;
+  announceTitle: string;
+  announceLine: string;
+  announceAlpha: number;
+  navActive: boolean;
+  navX: number;
+  navY: number;
 }
 
 const ENTER_RADIUS = 82;
@@ -79,6 +102,20 @@ export class GameScene extends Phaser.Scene {
     runTitle: '',
     runSubtitle: '',
     live: false,
+    health: 1,
+    armor: 0,
+    protected: false,
+    weapon: '',
+    ammo: 0,
+    capture: 0,
+    captured: false,
+    downed: false,
+    announceTitle: '',
+    announceLine: '',
+    announceAlpha: 0,
+    navActive: false,
+    navX: 0,
+    navY: 0,
   };
 
   private world!: World;
@@ -95,9 +132,28 @@ export class GameScene extends Phaser.Scene {
   private onboarding!: Onboarding;
   private driver = new PlayerDriver();
 
+  /** Exposed so the UI scene can open panels from keyboard shortcuts. */
+  get overlay() {
+    return this.session?.overlay ?? null;
+  }
+
   private session: Session | null = null;
   private remotes: RemotePlayers | null = null;
   private heatRun: HeatRun | null = null;
+  private crewWar: CrewWar | null = null;
+  private crew: Crew | null = null;
+  private combat!: Combat;
+  private pickups!: Pickups;
+  private vitals = new Vitals();
+  private capture = new Capture();
+  private objectives = new Objectives();
+  private stats: PlayerStats = emptyStats();
+  private localLabel: PlayerLabel | null = null;
+  private localLabelMs = 0;
+  private targets: HitTarget[] = [];
+  private aim = 0;
+  private downMs = 0;
+  private bustedMs = 0;
   /** False until the player has a name: the city runs, input does not. */
   private live = false;
 
@@ -157,6 +213,8 @@ export class GameScene extends Phaser.Scene {
     this.peds = new Pedestrians(this, this.world, this.focus);
     this.ambient = new AmbientEvents(this, this.traffic, this.peds);
     this.jobs = new Jobs(this, this.world, this.score);
+    this.combat = new Combat(this, this.world);
+    this.pickups = new Pickups(this, this.world);
     this.onboarding = new Onboarding();
     this.jobs.enabled = this.onboarding.jobsUnlocked;
 
@@ -213,15 +271,161 @@ export class GameScene extends Phaser.Scene {
 
     this.remotes = new RemotePlayers(this, session.net);
     this.heatRun = new HeatRun(session.net, session.identity.nickname, session.identity.id);
+    this.crewWar = new CrewWar(session.net);
+    this.crew = session.crew;
+    this.wireCombat(session);
+    this.showLocalLabel(20000);
 
-    session.net.onEvent = (type, payload, from) => this.heatRun?.onNetEvent(type, payload, from);
+    session.net.onEvent = (type, payload, from) => {
+      this.heatRun?.onNetEvent(type, payload, from);
+      this.crewWar?.onNetEvent(type, payload);
+      if (type === 'shot') this.combat.remoteShot(payload as ShotWire);
+      else if (type === 'hit') this.takeHit(payload, from);
+      else if (type === 'died') this.onRemoteDeath(payload, from);
+    };
     session.net.onRosterChange = () => this.refreshRoster();
     session.net.onPeerJoin = (peer) => {
-      session.overlay.toast(`${peer.nickname.toUpperCase()} JOINED`);
+      // The moment a room stops being empty is the one worth noticing.
+      const crew = peer.crewName ? `[${peer.crewTag}] ${peer.crewName}` : '';
+      const sub = [peer.handle ? `@${peer.handle}` : '', crew].filter(Boolean).join('   ');
+      session.overlay.toast(`${peer.nickname.toUpperCase()} JOINED`, 3600, sub);
       session.audio.cue('playerJoined');
+      if (session.net.peers.size === 1) this.objectives.announce('PLAYER JOINED', peer.nickname.toUpperCase());
     };
+    session.net.onPeerLeave = (peer) => session.overlay.toast(`${peer.nickname.toUpperCase()} LEFT`, 2200);
     session.overlay.onHeatRun = () => this.heatRun?.start();
+    session.overlay.onCrewWar = () => this.crewWar?.start();
+    session.overlay.onScoreboardOpen = () => track('scoreboard_opened');
+    session.overlay.onSettingsOpen = () => track('settings_opened');
+    session.onProfileChange = () => {
+      this.crew = session.crew;
+      this.showLocalLabel(6000);
+      this.refreshRoster();
+      this.saver?.mark();
+    };
     this.refreshRoster();
+  }
+
+  /** Called by the session when the player edits their crew in settings. */
+  setCrew(crew: Crew | null) {
+    this.crew = crew;
+    this.saver?.mark();
+    this.refreshRoster();
+  }
+
+  private wireCombat(session: Session) {
+    this.combat.onShot = (wire) => session.net.sendEvent('shot', wire);
+    this.combat.onHit = (targetId, damage) => {
+      session.net.sendEvent('hit', { d: Math.round(damage) });
+      void targetId;
+    };
+    this.combat.onNoise = (x, y, weapon) => {
+      this.hear(x, y, 'shot', weapon === 'shotgun' ? 1.4 : 1);
+      trackOnce('weapon_fired_first_time', { weapon });
+    };
+
+    this.pickups.onCollect = (kind, x, y) => this.collect(kind, x, y);
+  }
+
+  private collect(kind: PickupKind, x: number, y: number) {
+    if (kind === 'health') {
+      this.vitals.heal(45);
+      this.objectives.announce('MEDICAL', 'Health restored');
+    } else if (kind === 'armor') {
+      this.vitals.addArmor(60);
+      this.objectives.announce('PLATING', 'Armour added');
+    } else {
+      const weapon = kind as WeaponId;
+      this.combat.give(weapon, ammoFor(kind));
+      this.objectives.announce(WEAPONS[weapon].name, 'Weapon collected');
+      track('weapon_picked_up', { weapon });
+    }
+    this.session?.audio.cue('checkpoint');
+    this.effects.bump(x, y, 5);
+    this.saver?.mark();
+  }
+
+  /** Someone else's client says their bullet reached us. */
+  private takeHit(payload: unknown, from: string) {
+    if (!this.live || this.vitals.invulnerable) return;
+    const damage = Number((payload as { d?: number })?.d);
+    if (!Number.isFinite(damage) || damage <= 0 || damage > 120) return;
+
+    const result = this.vitals.damage(damage);
+    haptic(14);
+    this.cameras.main.shake(90, 0.004);
+    if (result.killed) this.die(from);
+  }
+
+  private die(killerId: string | null) {
+    if (this.vitals.down && this.downMs > 0) return;
+    this.vitals.down = true;
+    this.downMs = VITALS.downTime * 1000;
+    this.stats.deaths++;
+    this.combat.clear();
+    this.objectives.announce('DOWN', killerId ? 'You were taken out' : 'You went down');
+    this.session?.audio.cue('missionFailed');
+    this.session?.net.sendEvent('died', { killer: killerId });
+    track('player_died', { by: killerId ? 'player' : 'world' });
+    this.saver?.mark();
+  }
+
+  /** A remote player went down; we may have been the one who did it. */
+  private onRemoteDeath(payload: unknown, from: string) {
+    const session = this.session;
+    if (!session) return;
+    const killerId = (payload as { killer?: string | null })?.killer ?? null;
+    const victim = session.net.peers.get(from);
+    const victimName = `${victim?.crewTag ? `[${victim.crewTag}] ` : ''}${(victim?.nickname ?? 'PLAYER').toUpperCase()}`;
+
+    if (killerId === session.identity.id) {
+      this.stats.kills++;
+      session.net.meta.kills = this.stats.kills;
+      this.score.add(SCORE.eliminate, 'ELIMINATION');
+      this.crewWar?.award(this.crew?.tag, this.crew?.name, CREW_WAR.killPoints, 'kill');
+      const me = `${this.crew ? `[${this.crew.tag}] ` : ''}${session.identity.nickname.toUpperCase()}`;
+      session.overlay.killFeed(`${me} → ${victimName}`);
+      track('player_killed');
+      this.saver?.mark();
+      this.refreshRoster();
+      return;
+    }
+
+    const killer = killerId ? session.net.peers.get(killerId) : null;
+    const killerName = killer
+      ? `${killer.crewTag ? `[${killer.crewTag}] ` : ''}${killer.nickname.toUpperCase()}`
+      : 'THE CITY';
+    session.overlay.killFeed(`${killerName} → ${victimName}`);
+  }
+
+  private respawn() {
+    const spot = this.world.pickRoadPoint(this.focus, 320, 1200) ?? this.focus;
+    if (this.current) this.exitVehicle();
+    this.player.setActive(true, spot.x, spot.y);
+    this.focus.set(spot.x, spot.y);
+    this.cameras.main.centerOn(spot.x, spot.y);
+    this.vitals.respawn();
+    this.capture.reset(1500);
+    this.showLocalLabel(4000);
+  }
+
+  /** Your own name, so you can see how others see you — then it gets out of the way. */
+  private showLocalLabel(ms: number) {
+    const session = this.session;
+    if (!session) return;
+    if (!this.localLabel) {
+      this.localLabel = new PlayerLabel(this, {
+        nickname: session.identity.nickname,
+        handle: session.identity.handle,
+        crewTag: this.crew?.tag,
+      });
+    }
+    this.localLabel.setIdentity({
+      nickname: session.identity.nickname,
+      handle: session.identity.handle,
+      crewTag: this.crew?.tag,
+    });
+    this.localLabelMs = ms;
   }
 
   /**
@@ -231,6 +435,8 @@ export class GameScene extends Phaser.Scene {
    */
   private applySave(save: SaveState) {
     this.score.set(save.score, save.best);
+    this.stats = mergeStats(this.stats, save.stats);
+    this.session?.net && (this.session.net.meta.kills = this.stats.kills);
 
     const car = save.vehicleIndex !== null ? this.cars[save.vehicleIndex] : undefined;
     if (save.inVehicle && car) {
@@ -266,6 +472,10 @@ export class GameScene extends Phaser.Scene {
       nickname: session.identity.nickname,
       onboarded: !this.onboarding.active,
       muted: session.audio.muted,
+      handle: session.identity.handle,
+      crewTag: this.crew?.tag,
+      crewName: this.crew?.name,
+      stats: this.stats,
       score: this.score.value,
       best: this.score.best,
       inVehicle: !!v,
@@ -280,12 +490,51 @@ export class GameScene extends Phaser.Scene {
   private refreshRoster() {
     const session = this.session;
     if (!session) return;
-    const entries = [
-      { name: session.identity.nickname, score: this.score.value, self: true },
-      ...[...session.net.peers.values()].map((p) => ({ name: p.nickname, score: p.score, self: false })),
+    const players = [
+      {
+        name: session.identity.nickname,
+        handle: session.identity.handle,
+        crewTag: this.crew?.tag,
+        score: this.score.value,
+        kills: this.stats.kills,
+        self: true,
+      },
+      ...[...session.net.peers.values()].map((p) => ({
+        name: p.nickname,
+        handle: p.handle,
+        crewTag: p.crewTag,
+        score: p.score,
+        kills: p.kills,
+        self: false,
+      })),
     ].sort((a, b) => b.score - a.score);
-    session.overlay.setRoster(entries);
+
+    // Crew standings: the war tally when one is running, otherwise the sum of
+    // what each crew's members have scored in this room.
+    const war = this.crewWar;
+    const crews = war?.active || war?.winner ? war.board : this.crewTotals(players);
+
+    session.overlay.setRoster(players, crews);
     session.overlay.setRoom(session.room.code, session.net.onlineCount, session.net.status);
+    session.overlay.setPlayerInfo(session.identity.nickname, session.identity.handle, this.crew);
+  }
+
+  private crewTotals(players: { crewTag?: string; score: number }[]) {
+    const totals = new Map<string, { tag: string; name: string; points: number; accent: number }>();
+    const nameFor = (tag: string) => {
+      if (this.crew?.tag === tag) return this.crew.name;
+      for (const peer of this.session?.net.peers.values() ?? []) {
+        if (peer.crewTag === tag && peer.crewName) return peer.crewName;
+      }
+      return tag;
+    };
+    for (const p of players) {
+      if (!p.crewTag) continue;
+      const row = totals.get(p.crewTag);
+      if (row) row.points += p.score;
+      else totals.set(p.crewTag, { tag: p.crewTag, name: nameFor(p.crewTag), points: p.score, accent: crewAccent(p.crewTag) });
+    }
+    return [...totals.values()].sort((a, b) => b.points - a.points);
   }
 
   // ------------------------------------------------------------- setup
@@ -397,7 +646,7 @@ export class GameScene extends Phaser.Scene {
   // ------------------------------------------------------------- audio
 
   /** Position a world sound relative to the camera and play it. */
-  private hear(x: number, y: number, kind: 'horn' | 'shout' | 'crash', strength = 1) {
+  private hear(x: number, y: number, kind: 'horn' | 'shout' | 'crash' | 'shot', strength = 1) {
     const audio = this.session?.audio;
     if (!audio) return;
     const cam = this.cameras.main;
@@ -408,6 +657,7 @@ export class GameScene extends Phaser.Scene {
     const pan = clamp(dx / 700, -1, 1);
     if (kind === 'horn') audio.horn(pan, dist);
     else if (kind === 'shout') audio.shout(pan, dist);
+    else if (kind === 'shot') audio.gunshot(strength > 1.2, pan, dist);
     else audio.crash(strength, pan);
   }
 
@@ -499,6 +749,7 @@ export class GameScene extends Phaser.Scene {
 
     this.collectVehicles();
     this.traffic.update(dt, dtScale, this.focus, this.obstacles, this.policeCars);
+    this.police.setEscalation(this.heat.level);
     this.police.update(dt, this.focus, this.vel, dtScale);
     this.ambient.update(dt, dtScale, this.focus);
     // Patrols can be despawned by the two calls above, so rebuild the lists
@@ -515,6 +766,15 @@ export class GameScene extends Phaser.Scene {
     this.score.update(dt, !!this.current, this.current?.forwardSpeed ?? 0);
     this.jobs.enabled = this.onboarding.jobsUnlocked;
     this.jobs.update(dt, this.focus, !!this.current);
+
+    this.vitals.update(dt);
+    this.fight(time, dt, dtScale, input);
+    this.pickups.update(dt, this.focus.x, this.focus.y, (kind) => this.wants(kind));
+    this.policing(dt);
+    this.crewWar?.update(dt, (winner) => this.onCrewWarEnd(winner));
+    this.objectives.update(dt);
+    this.setObjective();
+    this.updateLocalLabel(dt);
     this.teach(dt);
     this.tyreFx();
     this.updatePrompt();
@@ -596,6 +856,7 @@ export class GameScene extends Phaser.Scene {
       this.score.escaped(level);
       this.heatPeak = 0;
       this.escapes++;
+      this.stats.escapes++;
       track('pursuit_escaped', { level });
       trackOnce('first_pursuit_escaped', { level });
       this.saver?.mark();
@@ -607,6 +868,8 @@ export class GameScene extends Phaser.Scene {
 
   private onJobDone() {
     this.jobsDone++;
+    this.stats.missions++;
+    this.crewWar?.award(this.crew?.tag, this.crew?.name, CREW_WAR.missionPoints, 'mission');
     this.saver?.mark();
     trackOnce('first_mission_completed');
     haptic([0, 18, 50, 26]);
@@ -651,6 +914,7 @@ export class GameScene extends Phaser.Scene {
         inVehicle: !!this.current,
         heat: Math.round(this.heat.value),
         score: this.score.value,
+        down: this.vitals.down,
       },
       moving,
     );
@@ -663,6 +927,8 @@ export class GameScene extends Phaser.Scene {
     }
     this.heatRun?.update(dt, this.heat.value, this.heat.level, this.police.count, (points) => {
       this.score.add(points, 'HEAT RUN');
+      this.stats.heatRunWins++;
+      this.crewWar?.award(this.crew?.tag, this.crew?.name, CREW_WAR.heatRunPoints, 'heatrun');
       this.saver?.mark();
       this.refreshRoster();
     });
@@ -679,6 +945,153 @@ export class GameScene extends Phaser.Scene {
         score: this.score.value,
       });
     }
+  }
+
+  /** Aim, fire and advance every bullet in the air. */
+  private fight(time: number, dt: number, dtScale: number, input: { firing: boolean }) {
+    const session = this.session;
+
+    if (this.live && !this.current && !this.vitals.down) {
+      if (hasTouch) {
+        this.aim = this.player.facing;
+      } else {
+        const pointer = this.input.activePointer;
+        this.aim = Math.atan2(pointer.worldY - this.player.y, pointer.worldX - this.player.x);
+      }
+      if (input.firing) this.combat.tryFire(time, this.player.x, this.player.y, this.aim);
+    }
+
+    // Crewmates are not targets: friendly fire is off by default.
+    this.targets.length = 0;
+    if (this.remotes) {
+      this.remotes.hitTargets(this.targets);
+      if (this.crew && session) {
+        for (let i = this.targets.length - 1; i >= 0; i--) {
+          const peer = session.net.peers.get(this.targets[i].id);
+          if (peer?.crewTag && peer.crewTag === this.crew.tag) this.targets.splice(i, 1);
+        }
+      }
+    }
+    this.combat.update(dt, dtScale, this.targets);
+  }
+
+  private wants(kind: PickupKind): boolean {
+    if (kind === 'health') return this.vitals.health < VITALS.maxHealth - 1;
+    if (kind === 'armor') return this.vitals.armor < VITALS.maxArmor - 1;
+    return true;
+  }
+
+  /** Capture progress, the down timer and the aftermath of an arrest. */
+  private policing(dt: number) {
+    if (this.vitals.down) {
+      this.downMs -= dt;
+      if (this.downMs <= 0) this.respawn();
+      return;
+    }
+    if (this.bustedMs > 0) this.bustedMs -= dt;
+    if (!this.live) return;
+
+    const speed = this.current ? Math.abs(this.current.forwardSpeed) : this.player.speed;
+    const caught = this.capture.update(dt, {
+      policeCount: this.police.count,
+      nearestDist: this.police.nearestDist,
+      speed,
+      inVehicle: !!this.current,
+    });
+    if (caught) this.onBusted();
+  }
+
+  private onBusted() {
+    this.heat.value = 0;
+    this.heatPeak = 0;
+    this.police.standDown();
+    this.jobs.abandon();
+
+    const penalty = Math.round(this.score.value * BUSTED.scorePenalty);
+    this.score.value = Math.max(0, this.score.value - penalty);
+    this.bustedMs = 2400;
+    this.objectives.announce('BUSTED', 'They took the car and a cut of your score');
+    this.session?.audio.cue('missionFailed');
+    haptic([0, 40, 70, 40]);
+    track('busted', { penalty });
+    this.respawn();
+    this.refreshRoster();
+    this.saver?.mark();
+  }
+
+  private onCrewWarEnd(winner: { tag: string; name: string } | null) {
+    if (!winner) return;
+    const mine = this.crew && winner.tag === this.crew.tag;
+    if (mine) {
+      this.stats.crewWarWins++;
+      this.score.add(SCORE.crewWarWin, 'CREW WAR');
+      this.saver?.mark();
+    }
+    this.objectives.announce(`${winner.name} WINS`, mine ? 'Your crew took it' : 'Crew war over');
+    this.session?.audio.cue(mine ? 'heatRunWin' : 'missionDone');
+    this.refreshRoster();
+  }
+
+  /** One answer to "what should I be doing?", rebuilt every frame. */
+  private setObjective() {
+    const war = this.crewWar;
+    if (war?.active) {
+      const board = war.board.slice(0, 3);
+      const mine = war.pointsFor(this.crew?.tag);
+      this.objectives.set({
+        kind: 'crewwar',
+        title: 'CREW WAR',
+        line: this.crew ? `${CREW_WAR.target - mine} points to win` : 'Join a crew to score',
+        seconds: war.timer / 1000,
+        extra: board.map((c) => `${c.tag}  ${c.points}`).join('\n') || undefined,
+      });
+      return;
+    }
+
+    if (this.heatRun?.active) {
+      this.objectives.set({
+        kind: 'heatrun',
+        title: 'HEAT RUN',
+        line: 'Reach HEAT 2, then lose them',
+        extra: this.heatRun.subtitle || undefined,
+      });
+      return;
+    }
+
+    if (this.police.count > 0 && this.heat.value > 0) {
+      this.objectives.set({
+        kind: 'pursuit',
+        title: 'ESCAPE',
+        line: 'Lose the pursuit',
+        extra: `HEAT ${this.heat.level}`,
+      });
+      return;
+    }
+
+    if (this.jobs.label) {
+      this.objectives.set({
+        kind: 'job',
+        title: 'HOT DELIVERY',
+        line: this.jobs.state === 'offered' ? 'Pick up the package' : 'Deliver the package',
+        distance: this.jobs.distance / 10,
+      });
+      return;
+    }
+
+    this.objectives.free();
+  }
+
+  private updateLocalLabel(dt: number) {
+    const label = this.localLabel;
+    if (!label) return;
+    if (this.localLabelMs <= 0) {
+      label.setVisible(false);
+      return;
+    }
+    this.localLabelMs -= dt;
+    const alpha = clamp(this.localLabelMs / 900, 0, 1);
+    const driving = !!this.current;
+    label.update(this.focus.x, this.focus.y, driving ? 34 : 28, alpha);
   }
 
   private updateAudio(nowMs: number) {
@@ -717,6 +1130,21 @@ export class GameScene extends Phaser.Scene {
     h.runTitle = this.heatRun?.title ?? '';
     h.runSubtitle = this.heatRun?.subtitle ?? '';
     h.live = this.live;
+    h.health = this.vitals.healthRatio;
+    h.armor = this.vitals.armorRatio;
+    h.protected = this.vitals.protection > 0;
+    h.weapon = this.combat.spec?.short ?? '';
+    h.ammo = this.combat.ammo;
+    h.capture = this.capture.progress;
+    h.captured = this.bustedMs > 0;
+    h.downed = this.vitals.down;
+    h.announceTitle = this.objectives.announcement?.title ?? '';
+    h.announceLine = this.objectives.announcement?.line ?? '';
+    h.announceAlpha = this.objectives.announceAlpha;
+    h.navActive = this.jobs.state !== 'off';
+    h.navX = this.jobs.target.x;
+    h.navY = this.jobs.target.y;
+    this.session?.overlay.setObjective(this.objectives.current);
   }
 
   private tyreFx() {

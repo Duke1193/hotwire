@@ -9,6 +9,8 @@ import { SupabaseTransport } from './SupabaseTransport';
 export interface PlayerState {
   playerId: string;
   nickname: string;
+  handle?: string;
+  crewTag?: string;
   x: number;
   y: number;
   rotation: number;
@@ -18,6 +20,8 @@ export interface PlayerState {
   inVehicle: boolean;
   heat: number;
   score: number;
+  /** Down players are drawn faded and cannot be hit. */
+  down: boolean;
   updatedAt: number;
 }
 
@@ -30,13 +34,19 @@ export interface Sample {
   velocityY: number;
   inVehicle: boolean;
   vehicleType: string;
+  down: boolean;
 }
 
 export interface Peer {
   id: string;
   nickname: string;
+  handle?: string;
+  crewTag?: string;
+  crewName?: string;
   score: number;
+  kills: number;
   heat: number;
+  down: boolean;
   samples: Sample[];
   lastSeen: number;
 }
@@ -55,6 +65,7 @@ export class MultiplayerSystem {
 
   onEvent: ((type: string, payload: unknown, from: string) => void) | null = null;
   onPeerJoin: ((peer: Peer) => void) | null = null;
+  onPeerLeave: ((peer: Peer) => void) | null = null;
   onRosterChange: (() => void) | null = null;
 
   private transport: Transport | null = null;
@@ -63,11 +74,20 @@ export class MultiplayerSystem {
   private presence: PresenceInfo;
   private everSawPeer = false;
 
+  /** Nickname and handle can change from the settings panel at any time. */
+  setIdentity(identity: Identity) {
+    this.identity = identity;
+    this.presence.nickname = identity.nickname;
+    this.presence.handle = identity.handle;
+  }
+
   constructor(private identity: Identity, readonly room: string) {
     this.presence = {
       playerId: identity.id,
       nickname: identity.nickname,
+      handle: identity.handle,
       score: 0,
+      kills: 0,
       heat: 0,
       updatedAt: Date.now(),
     };
@@ -120,8 +140,16 @@ export class MultiplayerSystem {
         onMessage: (type, payload, from) => this.receive(type, payload, from),
         onPresence: (peers) => this.syncPresence(peers),
         onStatus: (status) => {
+          const was = this.status;
           this.status = status;
           if (status === 'online') trackOnce('multiplayer_session_started');
+          // Losing the channel means we can no longer see anyone: drop them
+          // rather than leaving ghosts standing in the street.
+          if (status === 'offline' && was !== 'offline' && this.peers.size) {
+            for (const peer of [...this.peers.values()]) this.onPeerLeave?.(peer);
+            this.peers.clear();
+            this.onRosterChange?.();
+          }
         },
       });
     } catch (err) {
@@ -132,8 +160,11 @@ export class MultiplayerSystem {
     }
   }
 
+  /** Identity/crew/stat fields that ride along with presence. */
+  meta = { crewTag: undefined as string | undefined, crewName: undefined as string | undefined, kills: 0 };
+
   /** Rate-limited transform broadcast: fast while moving, a trickle when idle. */
-  publish(state: Omit<PlayerState, 'playerId' | 'nickname' | 'updatedAt'>, moving: boolean) {
+  publish(state: Omit<PlayerState, 'playerId' | 'nickname' | 'handle' | 'crewTag' | 'updatedAt'>, moving: boolean) {
     if (!this.transport) return;
     const now = performance.now();
     const gap = 1000 / (moving ? NET.sendHz : NET.idleHz);
@@ -144,6 +175,8 @@ export class MultiplayerSystem {
       ...state,
       playerId: this.identity.id,
       nickname: this.identity.nickname,
+      handle: this.identity.handle,
+      crewTag: this.meta.crewTag,
       updatedAt: Date.now(),
     };
     this.transport.send('state', full);
@@ -153,7 +186,11 @@ export class MultiplayerSystem {
       this.presence = {
         playerId: this.identity.id,
         nickname: this.identity.nickname,
+        handle: this.identity.handle,
+        crewTag: this.meta.crewTag,
+        crewName: this.meta.crewName,
         score: state.score,
+        kills: this.meta.kills,
         heat: state.heat,
         updatedAt: Date.now(),
       };
@@ -172,6 +209,7 @@ export class MultiplayerSystem {
     for (const [id, peer] of this.peers) {
       if (peer.lastSeen < cutoff) {
         this.peers.delete(id);
+        this.onPeerLeave?.(peer);
         changed = true;
       }
     }
@@ -196,8 +234,11 @@ export class MultiplayerSystem {
 
     const peer = this.ensure(from, s.nickname);
     peer.nickname = s.nickname || peer.nickname;
+    if (s.handle) peer.handle = s.handle;
+    peer.crewTag = s.crewTag;
     peer.heat = s.heat;
     peer.score = s.score;
+    peer.down = s.down === true;
     peer.lastSeen = Date.now();
     peer.samples.push({
       t: performance.now(),
@@ -208,6 +249,7 @@ export class MultiplayerSystem {
       velocityY: s.velocityY,
       inVehicle: s.inVehicle,
       vehicleType: s.vehicleType,
+      down: s.down === true,
     });
     if (peer.samples.length > 8) peer.samples.shift();
   }
@@ -215,7 +257,16 @@ export class MultiplayerSystem {
   private ensure(id: string, nickname: string): Peer {
     let peer = this.peers.get(id);
     if (!peer) {
-      peer = { id, nickname: nickname || 'PLAYER', score: 0, heat: 0, samples: [], lastSeen: Date.now() };
+      peer = {
+        id,
+        nickname: nickname || 'PLAYER',
+        score: 0,
+        kills: 0,
+        heat: 0,
+        down: false,
+        samples: [],
+        lastSeen: Date.now(),
+      };
       this.peers.set(id, peer);
       this.onPeerJoin?.(peer);
       this.onRosterChange?.();
@@ -235,13 +286,20 @@ export class MultiplayerSystem {
       seen.add(info.playerId);
       const peer = this.ensure(info.playerId, info.nickname);
       peer.nickname = info.nickname || peer.nickname;
+      if (info.handle) peer.handle = info.handle;
+      peer.crewTag = info.crewTag;
+      peer.crewName = info.crewName;
       peer.score = info.score;
+      peer.kills = info.kills ?? 0;
       peer.heat = info.heat;
       peer.lastSeen = Date.now();
     }
     // presence is the source of truth for membership
     for (const id of [...this.peers.keys()]) {
-      if (!seen.has(id)) this.peers.delete(id);
+      if (seen.has(id)) continue;
+      const gone = this.peers.get(id)!;
+      this.peers.delete(id);
+      this.onPeerLeave?.(gone);
     }
     this.onRosterChange?.();
   }

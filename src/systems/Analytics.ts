@@ -38,6 +38,19 @@ export type GameEvent =
   | 'multiplayer_session_started'
   | 'heat_run_started'
   | 'heat_run_completed'
+  | 'crew_created'
+  | 'crew_joined'
+  | 'crew_left'
+  | 'crew_invite_clicked'
+  | 'weapon_picked_up'
+  | 'weapon_fired_first_time'
+  | 'player_killed'
+  | 'player_died'
+  | 'busted'
+  | 'crew_war_started'
+  | 'crew_war_completed'
+  | 'scoreboard_opened'
+  | 'settings_opened'
   | 'game_paused'
   | 'game_resumed';
 
@@ -84,9 +97,9 @@ class AnalyticsBus {
   private loading = false;
   private identified: string | null = null;
 
-  /** True when a key and host were compiled in, regardless of consent. */
+  /** True when a usable key and host were compiled in, regardless of consent. */
   get configured(): boolean {
-    return Boolean(import.meta.env.VITE_POSTHOG_KEY && import.meta.env.VITE_POSTHOG_HOST);
+    return Boolean(usableKey(import.meta.env.VITE_POSTHOG_KEY) && import.meta.env.VITE_POSTHOG_HOST);
   }
 
   /** False when the player (or Do Not Track) has declined. */
@@ -111,7 +124,7 @@ class AnalyticsBus {
     this.dnt = readDoNotTrack();
     this.optedOut = this.readOptOut();
 
-    const key = import.meta.env.VITE_POSTHOG_KEY;
+    const key = usableKey(import.meta.env.VITE_POSTHOG_KEY);
     const host = import.meta.env.VITE_POSTHOG_HOST;
     if (!key || !host || this.optedOut || this.loading || this.posthog) return;
     this.loading = true;
@@ -215,6 +228,34 @@ class AnalyticsBus {
     }
     return this.dnt;
   }
+}
+
+/**
+ * Only PostHog's browser-safe *Project API Key* (`phc_…`) belongs in a bundle
+ * we ship to players. Personal and secret keys (`phx_…`, `phs_…`) carry
+ * account-level access, so we refuse them outright rather than publish one —
+ * and they would be rejected by the API anyway.
+ */
+let keyWarned = false;
+
+function usableKey(key: string | undefined): string | null {
+  const value = key?.trim();
+  if (!value) return null;
+  if (/^ph[xs]_/i.test(value)) {
+    if (!keyWarned) {
+      keyWarned = true;
+        console.error(
+        '[analytics] VITE_POSTHOG_KEY looks like a personal/secret PostHog key. ' +
+          'Refusing to use it in the browser — use the Project API Key, which starts with "phc_". Analytics disabled.',
+      );
+    }
+    return null;
+  }
+  if (!/^phc_/i.test(value) && !keyWarned) {
+    keyWarned = true;
+    console.warn('[analytics] VITE_POSTHOG_KEY does not look like a PostHog Project API Key ("phc_…").');
+  }
+  return value;
 }
 
 function readDoNotTrack(): boolean {

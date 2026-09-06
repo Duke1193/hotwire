@@ -36,10 +36,14 @@ export function resolveRoom(): RoomInfo {
   return { code, invited: false, host: null };
 }
 
-/** The link to hand to a friend. */
-export function inviteUrl(code: string, nickname: string): string {
+/** The link to hand to a friend, carrying the crew when there is one. */
+export function inviteUrl(code: string, nickname: string, crew?: { tag: string; name: string } | null): string {
   const params = new URLSearchParams();
   params.set('room', code);
   if (nickname) params.set('host', nickname.slice(0, 14));
+  if (crew) {
+    params.set('crew', crew.tag);
+    params.set('crewname', crew.name);
+  }
   return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
 }
