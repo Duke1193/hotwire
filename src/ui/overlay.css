@@ -84,6 +84,16 @@
   border-color: #2c5b73;
 }
 
+/* A present-but-quiet control: the privacy link should never shout. */
+.gw-btn.gw-quiet {
+  color: var(--gw-dim);
+  border-color: var(--gw-line);
+}
+
+.gw-btn.gw-quiet:hover {
+  color: var(--gw-ink);
+}
+
 .gw-btn:hover,
 .gw-chip:hover,
 .gw-icon:hover {
@@ -404,4 +414,165 @@
     max-width: 78vw;
     text-align: center;
   }
+}
+
+/* --------------------------------------------------------------- resume */
+
+.gw-boot .gw-stats {
+  display: flex;
+  gap: 26px;
+  justify-content: center;
+  margin: 4px 0 26px;
+}
+
+.gw-boot .gw-stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gw-boot .gw-stats span {
+  font-size: 24px;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gw-boot .gw-stats small {
+  font-size: 9px;
+  letter-spacing: 2.4px;
+  color: var(--gw-dim);
+}
+
+.gw-boot .gw-secondary {
+  margin-top: 9px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--gw-line);
+  color: var(--gw-dim);
+  border-radius: 5px;
+  padding: 12px;
+  font-size: 11px;
+  letter-spacing: 3px;
+  cursor: pointer;
+}
+
+.gw-boot .gw-secondary:hover {
+  border-color: var(--gw-accent);
+  color: var(--gw-ink);
+}
+
+.gw-fine {
+  margin: 18px 0 0;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  color: #5c6577;
+}
+
+.gw-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  color: var(--gw-accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* -------------------------------------------------------------- privacy */
+
+.gw-privacy {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 10, 14, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  z-index: 15;
+  padding: 16px;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.gw-privacy-inner {
+  width: min(430px, 92vw);
+  background: var(--gw-panel);
+  border: 1px solid var(--gw-line);
+  border-radius: 7px;
+  padding: 20px;
+}
+
+.gw-privacy-inner h2 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  letter-spacing: 4px;
+  font-weight: 500;
+}
+
+.gw-privacy-inner ul {
+  margin: 0 0 16px;
+  padding-left: 16px;
+}
+
+.gw-privacy-inner li {
+  font-size: 11px;
+  line-height: 1.55;
+  color: #a8b0c2;
+  margin-bottom: 7px;
+}
+
+.gw-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--gw-line);
+  padding-top: 14px;
+  font-size: 11px;
+  letter-spacing: 1.8px;
+}
+
+.gw-toggle {
+  min-width: 66px;
+  background: transparent;
+  border: 1px solid #2f6b46;
+  color: #4bd07a;
+  border-radius: 5px;
+  padding: 9px 12px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  cursor: pointer;
+}
+
+.gw-toggle[aria-pressed='false'] {
+  border-color: var(--gw-line);
+  color: var(--gw-dim);
+}
+
+.gw-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gw-privacy-inner .gw-play {
+  margin-top: 16px;
+  width: 100%;
+}
+
+/* ----------------------------------------------------- dev diagnostics */
+
+.gw-diag {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  bottom: calc(40px + env(safe-area-inset-bottom, 0px));
+  background: rgba(11, 14, 20, 0.9);
+  border: 1px dashed #4a5470;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 9px;
+  letter-spacing: 1.2px;
+  color: #8e97ab;
+  pointer-events: none;
+  white-space: pre;
 }

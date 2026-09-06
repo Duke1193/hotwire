@@ -52,19 +52,39 @@ matches desktop rather than showing a magnified sliver of street. Subtle
 haptics fire on heavy collisions, pursuit escalation and completed jobs where
 the Vibration API exists (it does not on iOS, and is a no-op there).
 
+## Saving
+
+A run is kept in `localStorage` under `getaway_save_v1`: score, best score,
+position, the car you were driving and where it was, the active job, nickname,
+onboarding, audio preference and a timestamp. Traffic, pedestrians, police,
+ambient incidents and remote players are never saved — they are simulation, not
+progress, and every client rebuilds them on load, so a resumed run starts calm
+rather than mid-chase.
+
+Writes are throttled: at most one every four seconds, a periodic write every
+twenty, and a final flush when the tab is hidden or closed. Returning players
+are offered `CONTINUE` or `NEW RUN`; `NEW RUN` clears the save but keeps the
+best score. Saves that are corrupt, from an older format, from a different
+player on a shared browser, off-map or more than thirty days old are discarded
+without a word, and a corrupt entry is deleted so it cannot fail twice.
+
 ## Multiplayer
 
 Optional. Copy `.env.example` to `.env` and fill in:
 
 ```
 VITE_SUPABASE_URL=...
-VITE_SUPABASE_ANON_KEY=...
+VITE_SUPABASE_PUBLISHABLE_KEY=...
 ```
 
-Create a Supabase project and take these from *Project Settings → API*. No
-tables, no auth and no row policies are needed: the game only uses Realtime
-**Presence** (who is in the room) and **Broadcast** (where they are), and
-stores nothing. Set the same two variables in Netlify's environment.
+Create a Supabase project and take these from *Project Settings → API keys*.
+Use the **publishable** key (`sb_publishable_…`); `VITE_SUPABASE_ANON_KEY` is
+still accepted as a fallback for older projects. Anything that looks like a
+secret or `service_role` key is refused outright, because every `VITE_`
+variable is shipped to every player. No tables, no auth and no row policies are
+needed: the game only uses Realtime **Presence** (who is in the room) and
+**Broadcast** (where they are), and stores nothing. Set the same variables in
+Netlify's environment.
 
 Without them the game runs single player and the room chip reads `OFFLINE`.
 The Supabase client is imported lazily and is dropped from the bundle entirely
@@ -73,9 +93,13 @@ when the variables are absent.
 **Rooms.** Every session has a code in the URL (`?room=7KQ2`). Opening the same
 URL joins the same channel (`getaway:7KQ2`). `INVITE` copies that link.
 
-**In development**, with no credentials, a `BroadcastChannel` loopback
-transport stands in so the whole netcode can be exercised in two tabs on one
-machine. Force it anywhere with `?loopback=1`. It cannot reach another device.
+**In development only**, a `BroadcastChannel` loopback transport stands in so
+the whole netcode can be exercised in two tabs on one machine (`?loopback=1`
+forces it). It is compiled out of production builds entirely and the query
+parameter does nothing there, so it can never be mistaken for real
+multiplayer — production rooms always go through Supabase. A dev-only badge in
+the corner says which transport is live, alongside whether PostHog and Supabase
+are configured. It never prints keys and does not exist in production.
 
 ### What is and is not synchronised
 

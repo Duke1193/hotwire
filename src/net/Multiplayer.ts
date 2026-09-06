@@ -1,6 +1,7 @@
 import { NET } from '../config';
 import { Analytics, trackOnce } from '../systems/Analytics';
 import type { Identity } from '../systems/Identity';
+import { readSupabaseConfig } from './env';
 import { LoopbackTransport, NetStatus, PresenceInfo, Transport } from './Transport';
 import { SupabaseTransport } from './SupabaseTransport';
 
@@ -44,8 +45,12 @@ export interface Peer {
  * Human players only. Each client keeps simulating its own city, its own
  * traffic and its own physics; all we exchange is where the people are.
  */
+export type TransportKind = 'supabase' | 'loopback' | null;
+
 export class MultiplayerSystem {
   status: NetStatus = 'offline';
+  /** Which transport is actually carrying this session. */
+  transportKind: TransportKind = null;
   readonly peers = new Map<string, Peer>();
 
   onEvent: ((type: string, payload: unknown, from: string) => void) | null = null;
@@ -78,18 +83,36 @@ export class MultiplayerSystem {
   }
 
   async connect() {
-    const url = import.meta.env.VITE_SUPABASE_URL;
-    const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    const loopback = new URLSearchParams(location.search).get('loopback') === '1';
+    // Read straight from import.meta.env here: the bundler replaces these with
+    // literals, so a build with no Supabase variables drops the client library
+    // from the bundle entirely instead of shipping an unused chunk.
+    const envUrl = import.meta.env.VITE_SUPABASE_URL;
+    const envKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-    if (url && key && !loopback) {
-      this.transport = new SupabaseTransport(url, key);
-    } else if (loopback || import.meta.env.DEV) {
-      // Lets two tabs on this machine exercise the full netcode with no keys.
-      this.transport = new LoopbackTransport();
-    } else {
-      this.status = 'offline';
-      return;
+    // The loopback transport is a development tool. It only reaches other tabs
+    // on this machine, so it must never stand in for real multiplayer: it is
+    // compiled out of production builds entirely and `?loopback=1` does
+    // nothing there.
+    const forceLoopback = import.meta.env.DEV && new URLSearchParams(location.search).get('loopback') === '1';
+
+    if (envUrl && envKey && !forceLoopback) {
+      // Validates the URL and refuses anything that looks like a secret key.
+      const { config } = readSupabaseConfig();
+      if (config) {
+        this.transport = new SupabaseTransport(config.url, config.key);
+        this.transportKind = 'supabase';
+      }
+    }
+
+    if (!this.transport) {
+      if (import.meta.env.DEV) {
+        this.transport = new LoopbackTransport();
+        this.transportKind = 'loopback';
+      } else {
+        this.status = 'offline';
+        this.transportKind = null;
+        return;
+      }
     }
 
     try {
@@ -104,6 +127,7 @@ export class MultiplayerSystem {
     } catch (err) {
       console.warn('[net] falling back to single player', err);
       this.transport = null;
+      this.transportKind = null;
       this.status = 'offline';
     }
   }
@@ -157,6 +181,7 @@ export class MultiplayerSystem {
   disconnect() {
     this.transport?.disconnect();
     this.transport = null;
+    this.transportKind = null;
     this.peers.clear();
     this.status = 'offline';
   }

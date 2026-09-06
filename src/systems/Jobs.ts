@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { SCORE } from '../config';
+import type { SavedJob } from './SaveGame';
 import type { World } from '../world/World';
 import { track } from './Analytics';
 import type { ScoreSystem } from './Score';
@@ -37,6 +38,21 @@ export class Jobs {
   constructor(scene: Phaser.Scene, private world: World, private score: ScoreSystem) {
     this.marker = scene.add.image(0, 0, 'marker').setDepth(7).setVisible(false).setAlpha(0.9);
     this.arrow = scene.add.image(0, 0, 'chev').setDepth(30).setVisible(false).setScale(1.4);
+  }
+
+  /** What is worth restoring after a reload: the objective, not the timer. */
+  snapshot(): SavedJob | null {
+    if (this.state === 'off') return null;
+    return { state: this.state, tx: this.target.x, ty: this.target.y, fx: this.from.x, fy: this.from.y };
+  }
+
+  restore(job: SavedJob) {
+    this.state = job.state;
+    this.target.set(job.tx, job.ty);
+    this.from.set(job.fx, job.fy);
+    this.label = job.state === 'offered' ? 'PICK UP' : 'DELIVER';
+    this.marker.setVisible(true).setPosition(job.tx, job.ty);
+    this.expiry = EXPIRY_MS;
   }
 
   update(dtMs: number, focus: Phaser.Math.Vector2, driving: boolean) {

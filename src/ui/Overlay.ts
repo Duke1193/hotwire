@@ -19,6 +19,9 @@ export class Overlay {
   onInvite: (() => void) | null = null;
   onSound: ((muted: boolean) => void) | null = null;
   onHeatRun: (() => void) | null = null;
+  onContinue: (() => void) | null = null;
+  onNewRun: (() => void) | null = null;
+  onAnalyticsChoice: ((enabled: boolean) => void) | null = null;
 
   private root: HTMLDivElement;
   private boot: HTMLDivElement;
@@ -35,6 +38,12 @@ export class Overlay {
   private nudge: HTMLDivElement;
   private nudgeText: HTMLParagraphElement;
   private rotate!: HTMLDivElement;
+  private bootNew!: HTMLDivElement;
+  private bootResume!: HTMLDivElement;
+  private privacyPanel!: HTMLDivElement;
+  private analyticsToggle!: HTMLButtonElement;
+  private privacyNote!: HTMLParagraphElement;
+  private diag!: HTMLDivElement;
 
   constructor(muted: boolean) {
     this.root = document.createElement('div');
@@ -42,10 +51,11 @@ export class Overlay {
     this.root.innerHTML = `
       <div class="gw-hud">
         <div class="gw-chip" id="gw-room" data-status="offline" title="Players in this city">
-          <span class="gw-dot"></span><span id="gw-roomcode">ROOM ····</span><b id="gw-online">1 ONLINE</b>
+          <span class="gw-dot"></span><span id="gw-roomcode">ROOM ····</span><b id="gw-online">OFFLINE</b>
         </div>
         <button class="gw-btn" id="gw-invite">INVITE</button>
         <button class="gw-icon" id="gw-sound" title="Sound"></button>
+        <button class="gw-btn gw-quiet" id="gw-privacy" title="Privacy &amp; analytics">PRIVACY</button>
       </div>
       <div class="gw-panel gw-hidden" id="gw-panel">
         <h3>IN THIS CITY</h3>
@@ -70,7 +80,7 @@ export class Overlay {
         <small>GETAWAY RUNS IN LANDSCAPE</small>
       </div>
       <div class="gw-boot gw-hidden" id="gw-boot">
-        <div class="gw-boot-inner">
+        <div class="gw-boot-inner" id="gw-boot-new">
           <h1>GETAWAY</h1>
           <p class="gw-sub">enter the city.</p>
           <p class="gw-join gw-hidden" id="gw-joining"></p>
@@ -78,8 +88,39 @@ export class Overlay {
           <input id="gw-nick" maxlength="14" autocomplete="off" spellcheck="false" placeholder="" />
           <p class="gw-err" id="gw-err"></p>
           <button class="gw-play" id="gw-play">PLAY</button>
+          <p class="gw-fine">no account · anonymous analytics · <button class="gw-link" data-privacy>PRIVACY</button></p>
         </div>
-      </div>`;
+        <div class="gw-boot-inner gw-hidden" id="gw-boot-resume">
+          <h1>GETAWAY</h1>
+          <p class="gw-sub" id="gw-welcome">welcome back.</p>
+          <div class="gw-stats">
+            <div><span id="gw-resume-score">0</span><small>SCORE</small></div>
+            <div><span id="gw-resume-best">0</span><small>BEST</small></div>
+          </div>
+          <button class="gw-play" id="gw-continue">CONTINUE</button>
+          <button class="gw-secondary" id="gw-newrun">NEW RUN</button>
+          <p class="gw-fine">no account · anonymous analytics · <button class="gw-link" data-privacy>PRIVACY</button></p>
+        </div>
+      </div>
+      <div class="gw-privacy gw-hidden" id="gw-privacy-panel">
+        <div class="gw-privacy-inner">
+          <h2>PRIVACY</h2>
+          <ul>
+            <li>No account, no email, no password. Ever.</li>
+            <li>A random ID is kept in this browser so your run, score and room can persist. It never leaves your device except as an anonymous analytics id.</li>
+            <li>Your nickname is shown to players in your room. It is never sent to analytics.</li>
+            <li>Optional product analytics count anonymous gameplay events — what people do, where they stop — so the game can be improved. No session recording, no tracking across other sites.</li>
+            <li>Multiplayer works exactly the same whether analytics are on or off.</li>
+          </ul>
+          <div class="gw-toggle-row">
+            <span>PRODUCT ANALYTICS</span>
+            <button id="gw-analytics-toggle" class="gw-toggle" aria-pressed="true">ON</button>
+          </div>
+          <p class="gw-fine" id="gw-privacy-note"></p>
+          <button class="gw-play" id="gw-privacy-close">CLOSE</button>
+        </div>
+      </div>
+      <div class="gw-diag gw-hidden" id="gw-diag"></div>`;
     document.body.appendChild(this.root);
 
     const q = <T extends HTMLElement>(id: string) => this.root.querySelector(`#${id}`) as T;
@@ -97,7 +138,32 @@ export class Overlay {
     this.nudge = q('gw-nudge');
     this.nudgeText = q('gw-nudge-text');
     this.rotate = q('gw-rotate');
+    this.bootNew = q('gw-boot-new');
+    this.bootResume = q('gw-boot-resume');
+    this.privacyPanel = q('gw-privacy-panel');
+    this.analyticsToggle = q('gw-analytics-toggle');
+    this.privacyNote = q('gw-privacy-note');
+    this.diag = q('gw-diag');
     this.watchOrientation();
+
+    q('gw-continue').addEventListener('click', () => {
+      this.hideBoot();
+      this.onContinue?.();
+    });
+    q('gw-newrun').addEventListener('click', () => {
+      this.hideBoot();
+      this.onNewRun?.();
+    });
+    this.root.querySelectorAll('[data-privacy]').forEach((link) => {
+      link.addEventListener('click', () => this.openPrivacy());
+    });
+    q('gw-privacy').addEventListener('click', () => this.openPrivacy());
+    q('gw-privacy-close').addEventListener('click', () => this.privacyPanel.classList.add('gw-hidden'));
+    this.analyticsToggle.addEventListener('click', () => {
+      const next = this.analyticsToggle.getAttribute('aria-pressed') !== 'true';
+      this.setAnalyticsState(next);
+      this.onAnalyticsChoice?.(next);
+    });
 
     q('gw-play').addEventListener('click', () => this.submit());
     this.input.addEventListener('keydown', (e) => {
@@ -118,6 +184,7 @@ export class Overlay {
       this.onSound?.(next);
     });
     this.setMuted(muted);
+    this.hidePrivacyLinkLabel();
   }
 
   /**
@@ -165,6 +232,41 @@ export class Overlay {
 
   hideBoot() {
     this.boot.classList.add('gw-hidden');
+  }
+
+  /** Returning player with a save: offer to pick the run back up. */
+  showResume(info: { nickname: string; score: number; best: number }) {
+    this.bootNew.classList.add('gw-hidden');
+    this.bootResume.classList.remove('gw-hidden');
+    this.boot.classList.remove('gw-hidden');
+    (this.root.querySelector('#gw-welcome') as HTMLElement).textContent =
+      `welcome back, ${info.nickname.toLowerCase()}.`;
+    (this.root.querySelector('#gw-resume-score') as HTMLElement).textContent = info.score.toLocaleString('en-US');
+    (this.root.querySelector('#gw-resume-best') as HTMLElement).textContent = info.best.toLocaleString('en-US');
+  }
+
+  // -------------------------------------------------------------- privacy
+
+  openPrivacy() {
+    this.privacyPanel.classList.remove('gw-hidden');
+  }
+
+  /**
+   * Reflects the current consent state. When analytics cannot run at all — no
+   * key compiled in, or the browser sends Do Not Track — the control is
+   * disabled rather than left looking broken when it does not respond.
+   */
+  setAnalyticsState(enabled: boolean, note = '', available = true) {
+    this.analyticsToggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    this.analyticsToggle.textContent = enabled ? 'ON' : 'OFF';
+    this.analyticsToggle.disabled = !available;
+    this.privacyNote.textContent = note;
+  }
+
+  /** Development only: a small badge showing how this build is configured. */
+  setDiagnostics(text: string) {
+    this.diag.textContent = text;
+    this.diag.classList.toggle('gw-hidden', !text);
   }
 
   // ---------------------------------------------------------------- room
@@ -217,6 +319,10 @@ export class Overlay {
 
   hideNudge() {
     this.nudge.classList.add('gw-hidden');
+  }
+
+  private hidePrivacyLinkLabel() {
+    if (hasTouch) (this.root.querySelector('#gw-privacy') as HTMLElement).textContent = '\u{1F6E1}';
   }
 
   private setMuted(muted: boolean) {

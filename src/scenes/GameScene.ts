@@ -16,6 +16,7 @@ import { Onboarding } from '../systems/Onboarding';
 import { Hazard, Pedestrians } from '../systems/Pedestrians';
 import { PoliceSystem } from '../systems/PoliceSystem';
 import { ScoreSystem } from '../systems/Score';
+import { readBest, SAVE_VERSION, SaveScheduler, SaveState } from '../systems/SaveGame';
 import { Traffic } from '../systems/Traffic';
 import { InputHub } from '../systems/Input';
 import { PlayerDriver } from '../systems/VehicleController';
@@ -126,6 +127,7 @@ export class GameScene extends Phaser.Scene {
   private jobsDone = 0;
   private lastHeatLevel = 0;
   private lastRunPhase = 'idle';
+  private saver: SaveScheduler | null = null;
 
   private prompt!: Phaser.GameObjects.Container;
   private promptText!: Phaser.GameObjects.Text;
@@ -175,9 +177,18 @@ export class GameScene extends Phaser.Scene {
       this.traffic.shock(x, y, 320);
     };
     this.jobs.onCompleted = () => this.onJobDone();
-    this.jobs.onOffered = () => this.session?.audio.cue('missionAccepted');
-    this.jobs.onPickedUp = () => this.session?.audio.cue('checkpoint');
-    this.jobs.onFailed = () => this.session?.audio.cue('missionFailed');
+    this.jobs.onOffered = () => {
+      this.session?.audio.cue('missionAccepted');
+      this.saver?.mark();
+    };
+    this.jobs.onPickedUp = () => {
+      this.session?.audio.cue('checkpoint');
+      this.saver?.mark();
+    };
+    this.jobs.onFailed = () => {
+      this.session?.audio.cue('missionFailed');
+      this.saver?.mark();
+    };
 
     onSession((s) => this.attach(s));
 
@@ -190,6 +201,16 @@ export class GameScene extends Phaser.Scene {
   private attach(session: Session) {
     this.session = session;
     this.live = true;
+    this.score.best = readBest();
+    if (session.resume) this.applySave(session.resume);
+
+    this.saver = new SaveScheduler(() => this.collectSave());
+    const flush = () => this.saver?.flush();
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) flush();
+    });
+
     this.remotes = new RemotePlayers(this, session.net);
     this.heatRun = new HeatRun(session.net, session.identity.nickname, session.identity.id);
 
@@ -201,6 +222,59 @@ export class GameScene extends Phaser.Scene {
     };
     session.overlay.onHeatRun = () => this.heatRun?.start();
     this.refreshRoster();
+  }
+
+  /**
+   * Puts the player back where they were. Only progress is restored — the
+   * city, its traffic, its crowds and any pursuit are always freshly
+   * simulated, so a resumed run starts calm rather than mid-chase.
+   */
+  private applySave(save: SaveState) {
+    this.score.set(save.score, save.best);
+
+    const car = save.vehicleIndex !== null ? this.cars[save.vehicleIndex] : undefined;
+    if (save.inVehicle && car) {
+      car.sprite.setPosition(save.x, save.y);
+      car.sprite.setRotation(save.rotation);
+      car.sprite.setVelocity(0, 0);
+      car.sprite.setAngularVelocity(0);
+      this.enterVehicle(car, true);
+    } else {
+      this.player.setActive(true, save.x, save.y);
+      this.player.sprite.setRotation(save.rotation);
+    }
+
+    if (save.job) {
+      this.jobs.enabled = true;
+      this.jobs.restore(save.job);
+    }
+
+    this.focus.set(save.x, save.y);
+    this.cameras.main.centerOn(save.x, save.y);
+    this.saver?.mark();
+  }
+
+  private collectSave(): SaveState | null {
+    const session = this.session;
+    if (!session || !this.live) return null;
+    const v = this.current;
+    const index = v ? this.cars.indexOf(v) : -1;
+    return {
+      version: SAVE_VERSION,
+      timestamp: Date.now(),
+      playerId: session.identity.id,
+      nickname: session.identity.nickname,
+      onboarded: !this.onboarding.active,
+      muted: session.audio.muted,
+      score: this.score.value,
+      best: this.score.best,
+      inVehicle: !!v,
+      x: v ? v.x : this.player.x,
+      y: v ? v.y : this.player.y,
+      rotation: v ? v.rotation : this.player.sprite.rotation,
+      vehicleIndex: index >= 0 ? index : null,
+      job: this.jobs.snapshot(),
+    };
   }
 
   private refreshRoster() {
@@ -270,15 +344,18 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private enterVehicle(v: Vehicle) {
+  /** `restored` skips the analytics, which describe player actions only. */
+  private enterVehicle(v: Vehicle, restored = false) {
     this.current = v;
     v.occupied = true;
     v.controlled = true;
     this.player.setActive(false);
     this.prompt.setVisible(false);
     this.rig.follow(v.sprite);
+    if (restored) return;
     track('vehicle_entered');
     trackOnce('first_vehicle_entered');
+    this.saver?.mark();
   }
 
   private exitVehicle() {
@@ -291,6 +368,7 @@ export class GameScene extends Phaser.Scene {
     this.player.setActive(true, side.x, side.y);
     this.rig.follow(this.player.sprite);
     track('vehicle_exited');
+    this.saver?.mark();
   }
 
   private freeSideOf(v: Vehicle): Phaser.Math.Vector2 {
@@ -457,6 +535,7 @@ export class GameScene extends Phaser.Scene {
 
     const speedRatio = this.current ? Math.abs(this.current.forwardSpeed) / DRIVE.maxSpeed : 0;
     this.rig.update(dtScale, this.vel.x, this.vel.y, !!this.current, speedRatio);
+    this.saver?.update(dt);
     this.syncHud();
   }
 
@@ -519,6 +598,7 @@ export class GameScene extends Phaser.Scene {
       this.escapes++;
       track('pursuit_escaped', { level });
       trackOnce('first_pursuit_escaped', { level });
+      this.saver?.mark();
       this.session?.audio.cue('escaped');
       this.refreshRoster();
       if (this.escapes === 1) this.nudge('THAT WAS CLOSE.');
@@ -527,6 +607,7 @@ export class GameScene extends Phaser.Scene {
 
   private onJobDone() {
     this.jobsDone++;
+    this.saver?.mark();
     trackOnce('first_mission_completed');
     haptic([0, 18, 50, 26]);
     this.session?.audio.cue('missionDone');
@@ -582,6 +663,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.heatRun?.update(dt, this.heat.value, this.heat.level, this.police.count, (points) => {
       this.score.add(points, 'HEAT RUN');
+      this.saver?.mark();
       this.refreshRoster();
     });
 

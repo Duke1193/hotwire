@@ -80,11 +80,27 @@ class AnalyticsBus {
   private fired = new Set<GameEvent>();
   private startedAt = Date.now();
   private optedOut = false;
+  private dnt = false;
+  private loading = false;
   private identified: string | null = null;
 
-  /** Loads PostHog if it is configured and allowed. Safe to call once, early. */
+  /** True when a key and host were compiled in, regardless of consent. */
+  get configured(): boolean {
+    return Boolean(import.meta.env.VITE_POSTHOG_KEY && import.meta.env.VITE_POSTHOG_HOST);
+  }
+
+  /** False when the player (or Do Not Track) has declined. */
+  get enabled(): boolean {
+    return !this.optedOut;
+  }
+
+  /** True when the browser asked not to be tracked, so the UI can say so. */
+  get doNotTrack(): boolean {
+    return this.dnt;
+  }
+
+  /** Loads PostHog if it is configured and allowed. Safe to call again later. */
   init() {
-    this.optedOut = this.readOptOut();
     const sink = window as unknown as Sink;
     sink.getawayAnalytics = {
       optOut: () => this.optOut(),
@@ -92,9 +108,13 @@ class AnalyticsBus {
       enabled: () => !this.optedOut,
     };
 
+    this.dnt = readDoNotTrack();
+    this.optedOut = this.readOptOut();
+
     const key = import.meta.env.VITE_POSTHOG_KEY;
     const host = import.meta.env.VITE_POSTHOG_HOST;
-    if (!key || !host || this.optedOut) return;
+    if (!key || !host || this.optedOut || this.loading || this.posthog) return;
+    this.loading = true;
 
     void import('posthog-js')
       .then(({ default: posthog }) => {
@@ -115,6 +135,7 @@ class AnalyticsBus {
       })
       .catch((err) => {
         // Analytics must never take the game down with it.
+        this.loading = false;
         if (import.meta.env.DEV) console.warn('[analytics] posthog unavailable', err);
       });
   }
@@ -156,6 +177,7 @@ class AnalyticsBus {
 
   optOut() {
     this.optedOut = true;
+    this.pending.length = 0;
     try {
       localStorage.setItem(OPT_OUT_KEY, '1');
     } catch {
@@ -165,13 +187,16 @@ class AnalyticsBus {
   }
 
   optIn() {
+    // Do Not Track is the browser speaking for the player; never override it.
+    if (this.dnt) return;
     this.optedOut = false;
     try {
       localStorage.removeItem(OPT_OUT_KEY);
     } catch {
       /* ignore */
     }
-    this.posthog?.opt_in_capturing();
+    if (this.posthog) this.posthog.opt_in_capturing();
+    else this.init(); // consent given after boot: load the client now
   }
 
   private send(name: GameEvent, props: Props) {
@@ -188,11 +213,14 @@ class AnalyticsBus {
     } catch {
       /* private mode: fall through */
     }
-    const dnt =
-      navigator.doNotTrack === '1' ||
-      (window as unknown as { doNotTrack?: string }).doNotTrack === '1';
-    return dnt;
+    return this.dnt;
   }
+}
+
+function readDoNotTrack(): boolean {
+  return (
+    navigator.doNotTrack === '1' || (window as unknown as { doNotTrack?: string }).doNotTrack === '1'
+  );
 }
 
 export const Analytics = new AnalyticsBus();

@@ -1,8 +1,10 @@
 import { MultiplayerSystem } from './net/Multiplayer';
+import { readSupabaseConfig } from './net/env';
 import { inviteUrl, resolveRoom, RoomInfo } from './net/Room';
 import { Analytics, track } from './systems/Analytics';
 import { AudioBus } from './systems/Audio';
 import { Identity, loadIdentity, sanitizeNickname, saveIdentity } from './systems/Identity';
+import { clearSave, readBest, readSave, SaveState } from './systems/SaveGame';
 import { getOverlay, initOverlay, Overlay } from './ui/Overlay';
 
 export interface Session {
@@ -11,6 +13,8 @@ export interface Session {
   audio: AudioBus;
   overlay: Overlay;
   net: MultiplayerSystem;
+  /** A run to restore, when the player chose CONTINUE. */
+  resume: SaveState | null;
   invite(): void;
 }
 
@@ -39,6 +43,7 @@ export function bootSession() {
   const existing = loadIdentity();
 
   overlay.onSound = (muted) => audio.setMuted(muted);
+  wirePrivacy(overlay);
 
   if (existing) {
     // Returning player: straight in. Audio still needs a gesture to start.
@@ -52,7 +57,25 @@ export function bootSession() {
     if (room.invited) {
       overlay.toast(room.host ? `JOINING ${room.host.toUpperCase()}' CITY` : `JOINING ROOM ${room.code}`, 3200);
     }
-    finish(existing, room, audio, overlay, true);
+
+    // A valid save means the player gets to choose rather than being dropped
+    // into a run they did not ask to continue.
+    const save = readSave(existing.id);
+    if (save) {
+      overlay.showResume({ nickname: existing.nickname, score: save.score, best: Math.max(save.best, readBest()) });
+      overlay.onContinue = () => {
+        audio.start();
+        finish(existing, room, audio, overlay, true, save);
+      };
+      overlay.onNewRun = () => {
+        audio.start();
+        clearSave();
+        finish(existing, room, audio, overlay, true, null);
+      };
+      return;
+    }
+
+    finish(existing, room, audio, overlay, true, null);
     return;
   }
 
@@ -67,11 +90,55 @@ export function bootSession() {
     track('nickname_created');
     audio.start();
     overlay.hideBoot();
-    finish(identity, room, audio, overlay, false);
+    finish(identity, room, audio, overlay, false, null);
   };
 }
 
-function finish(identity: Identity, room: RoomInfo, audio: AudioBus, overlay: Overlay, returning: boolean) {
+/** The player-facing analytics switch, plus whatever the browser already said. */
+function wirePrivacy(overlay: Overlay) {
+  const available = () => Analytics.configured && !Analytics.doNotTrack;
+  const describe = () => {
+    if (!Analytics.configured) return 'This build has no analytics configured — nothing is being sent.';
+    if (Analytics.doNotTrack) return 'Your browser sends Do Not Track, so analytics stay off.';
+    return 'Your choice is remembered on this device.';
+  };
+  const render = () => overlay.setAnalyticsState(Analytics.enabled && Analytics.configured, describe(), available());
+
+  render();
+  overlay.onAnalyticsChoice = (enabled) => {
+    if (enabled) Analytics.optIn();
+    else Analytics.optOut();
+    render();
+  };
+}
+
+/** Development-only summary of how this build is wired. Never prints keys. */
+function reportDiagnostics(overlay: Overlay, net: MultiplayerSystem) {
+  if (!import.meta.env.DEV) return;
+  const { config, problem } = readSupabaseConfig();
+  const supabase = config ? `configured (${config.source} key)` : `not configured${problem ? ` (${problem})` : ''}`;
+  const posthog = Analytics.configured ? 'configured' : 'not configured';
+  const transport =
+    net.transportKind === 'loopback'
+      ? 'loopback — LOCAL TABS ONLY, not real multiplayer'
+      : (net.transportKind ?? 'offline');
+
+  overlay.setDiagnostics(`DEV BUILD\nPOSTHOG   ${posthog}\nSUPABASE  ${supabase}\nTRANSPORT ${transport}`);
+  console.info(
+    `%c[getaway] dev diagnostics%c\n  PostHog:   ${posthog}\n  Supabase:  ${supabase}\n  Transport: ${transport}`,
+    'color:#69d8ff',
+    'color:inherit',
+  );
+}
+
+function finish(
+  identity: Identity,
+  room: RoomInfo,
+  audio: AudioBus,
+  overlay: Overlay,
+  returning: boolean,
+  resume: SaveState | null,
+) {
   const net = new MultiplayerSystem(identity, room.code);
 
   const session: Session = {
@@ -80,6 +147,7 @@ function finish(identity: Identity, room: RoomInfo, audio: AudioBus, overlay: Ov
     audio,
     overlay,
     net,
+    resume,
     invite: () => shareInvite(room, identity, overlay, net.status === 'offline'),
   };
 
@@ -89,10 +157,13 @@ function finish(identity: Identity, room: RoomInfo, audio: AudioBus, overlay: Ov
   Analytics.identify(identity.id);
   Analytics.setContext({ room_id: room.code, nickname_set: true, multiplayer: false, online_player_count: 1 });
   track(room.invited ? 'room_joined' : 'room_created', { invited: room.invited });
-  track('game_started', { returning });
+  track('game_started', { returning, resumed: Boolean(resume) });
 
   // Never block the game on the network.
-  void net.connect().then(() => overlay.setRoom(room.code, net.onlineCount, net.status));
+  void net.connect().then(() => {
+    overlay.setRoom(room.code, net.onlineCount, net.status);
+    reportDiagnostics(overlay, net);
+  });
 
   current = session;
   for (const cb of waiting.splice(0)) cb(session);
