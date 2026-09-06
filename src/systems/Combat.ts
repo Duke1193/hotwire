@@ -119,8 +119,11 @@ export class Combat {
 
   private pool: Bullet[] = [];
   private nextShotAt = 0;
+  private flash: Phaser.GameObjects.Image;
+  private flashMs = 0;
 
   constructor(scene: Phaser.Scene, private world: World) {
+    this.flash = scene.add.image(-999, -999, 'flash-pistol').setDepth(14).setVisible(false);
     for (let i = 0; i < COMBAT.poolSize; i++) {
       const sprite = scene.add.image(-999, -999, 'bullet').setDepth(13).setVisible(false);
       this.pool.push({ sprite, vx: 0, vy: 0, life: 0, damage: 0, mine: false, active: false });
@@ -155,6 +158,7 @@ export class Combat {
 
     const seed = (Math.random() * 65535) | 0;
     this.emit(spec, x, y, angle, seed, true);
+    this.showFlash(spec, x, y, angle);
     this.onShot?.({ x: Math.round(x), y: Math.round(y), a: +angle.toFixed(3), w: spec.id, s: seed });
     this.onNoise?.(x, y, spec.id);
     if (this.ammo <= 0) this.weapon = null;
@@ -166,6 +170,7 @@ export class Combat {
     const spec = WEAPONS[wire.w];
     if (!spec) return;
     this.emit(spec, wire.x, wire.y, wire.a, wire.s, false);
+    this.showFlash(spec, wire.x, wire.y, wire.a);
     this.onNoise?.(wire.x, wire.y, spec.id);
   }
 
@@ -195,7 +200,25 @@ export class Combat {
     }
   }
 
+  /** One short flash at the muzzle, shaped per weapon. */
+  private showFlash(spec: WeaponSpec, x: number, y: number, angle: number) {
+    this.flash
+      .setTexture(`flash-${spec.id}`)
+      .setPosition(x + Math.cos(angle) * 17, y + Math.sin(angle) * 17)
+      .setRotation(angle)
+      .setOrigin(0.1, 0.5)
+      .setAlpha(0.95)
+      .setVisible(true);
+    this.flashMs = spec.id === 'shotgun' ? 90 : 55;
+  }
+
   update(dtMs: number, dtScale: number, targets: HitTarget[]) {
+    if (this.flashMs > 0) {
+      this.flashMs -= dtMs;
+      this.flash.setAlpha(Math.max(0, this.flashMs / 60));
+      if (this.flashMs <= 0) this.flash.setVisible(false);
+    }
+
     for (const b of this.pool) {
       if (!b.active) continue;
       b.life -= dtMs;

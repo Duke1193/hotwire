@@ -151,6 +151,28 @@ Three deliberate V1 compromises, all documented at the code:
   reaches the same total, but in a photo finish two machines can disagree
   about who crossed first. Accepted for a social prototype.
 
+## The city
+
+Four quarters of one grid, told apart by material rather than geometry:
+**WAREHOUSE ROW** (steel, shutters, hazard kerbs, dumpsters), **NIGHT MARKET**
+(terracotta, awnings, stalls), **RIVERSIDE** (teal, greenery, benches) and
+**OLD BLOCKS** (brick, tight courtyards). Crossing between them shows a short
+`ENTERING …` notice.
+
+Six invented landmarks — EASTSIDE DEPOT, CITY MOTORS, NIGHT MARKET, RIVER
+GARAGE, CENTRAL PARKING, OLD MILL — carry their name painted on the roof, so
+"meet me at the depot" works without a minimap.
+
+Vehicles come in seven silhouettes (compact, sedan, sport, van, delivery,
+heavy, patrol, interceptor) with proportions that read before the colour does,
+and modest handling and durability to match. They take visible damage through
+healthy → damaged → critical → wrecked; a wrecked shell loses its engine and
+rolls to a stop.
+
+All of it — district palettes, roof kit, shop frontages, road patches, drains,
+landmark lettering — is baked into the two existing render textures at boot, so
+the denser city costs the frame budget almost nothing.
+
 ## What is in the city
 
 - **Traffic** on a lane grid: keeps right, picks turns at intersections, brakes

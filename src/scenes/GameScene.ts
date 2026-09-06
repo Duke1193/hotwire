@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { BUSTED, CREW_WAR, DRIVE, HEAT, SCORE, VITALS, WORLD } from '../config';
+import { BUSTED, CREW_WAR, DISTRICTS, DRIVE, HEAT, SCORE, VITALS, WORLD } from '../config';
 import { Player } from '../entities/Player';
 import { NEUTRAL, Vehicle } from '../entities/Vehicle';
 import { CAR_SKINS } from '../gfx/Textures';
@@ -63,9 +63,11 @@ export interface Hud {
   capture: number;
   captured: boolean;
   downed: boolean;
+  announceKicker: string;
   announceTitle: string;
   announceLine: string;
   announceAlpha: number;
+  announcePunch: number;
   navActive: boolean;
   navX: number;
   navY: number;
@@ -110,9 +112,11 @@ export class GameScene extends Phaser.Scene {
     capture: 0,
     captured: false,
     downed: false,
+    announceKicker: '',
     announceTitle: '',
     announceLine: '',
     announceAlpha: 0,
+    announcePunch: 0,
     navActive: false,
     navX: 0,
     navY: 0,
@@ -148,6 +152,7 @@ export class GameScene extends Phaser.Scene {
   private capture = new Capture();
   private objectives = new Objectives();
   private stats: PlayerStats = emptyStats();
+  private heldWeapon!: Phaser.GameObjects.Image;
   private localLabel: PlayerLabel | null = null;
   private localLabelMs = 0;
   private targets: HitTarget[] = [];
@@ -183,6 +188,8 @@ export class GameScene extends Phaser.Scene {
   private jobsDone = 0;
   private lastHeatLevel = 0;
   private lastRunPhase = 'idle';
+  private district = -1;
+  private lastShotWeapon: WeaponId = 'pistol';
   private saver: SaveScheduler | null = null;
 
   private prompt!: Phaser.GameObjects.Container;
@@ -214,6 +221,8 @@ export class GameScene extends Phaser.Scene {
     this.ambient = new AmbientEvents(this, this.traffic, this.peds);
     this.jobs = new Jobs(this, this.world, this.score);
     this.combat = new Combat(this, this.world);
+    // The weapon you are carrying sits at your shoulder and points where you aim.
+    this.heldWeapon = this.add.image(0, 0, 'wpn-pistol').setDepth(12).setVisible(false).setOrigin(0.2, 0.5);
     this.pickups = new Pickups(this, this.world);
     this.onboarding = new Onboarding();
     this.jobs.enabled = this.onboarding.jobsUnlocked;
@@ -320,7 +329,8 @@ export class GameScene extends Phaser.Scene {
       void targetId;
     };
     this.combat.onNoise = (x, y, weapon) => {
-      this.hear(x, y, 'shot', weapon === 'shotgun' ? 1.4 : 1);
+      this.lastShotWeapon = weapon;
+      this.hear(x, y, 'shot');
       trackOnce('weapon_fired_first_time', { weapon });
     };
 
@@ -340,7 +350,7 @@ export class GameScene extends Phaser.Scene {
       this.objectives.announce(WEAPONS[weapon].name, 'Weapon collected');
       track('weapon_picked_up', { weapon });
     }
-    this.session?.audio.cue('checkpoint');
+    this.session?.audio.cue('pickup');
     this.effects.bump(x, y, 5);
     this.saver?.mark();
   }
@@ -363,8 +373,8 @@ export class GameScene extends Phaser.Scene {
     this.downMs = VITALS.downTime * 1000;
     this.stats.deaths++;
     this.combat.clear();
-    this.objectives.announce('DOWN', killerId ? 'You were taken out' : 'You went down');
-    this.session?.audio.cue('missionFailed');
+    this.objectives.announce('DOWN', killerId ? 'You were taken out' : 'You went down', '', 2000);
+    this.session?.audio.cue('down');
     this.session?.net.sendEvent('died', { killer: killerId });
     track('player_died', { by: killerId ? 'player' : 'world' });
     this.saver?.mark();
@@ -657,7 +667,7 @@ export class GameScene extends Phaser.Scene {
     const pan = clamp(dx / 700, -1, 1);
     if (kind === 'horn') audio.horn(pan, dist);
     else if (kind === 'shout') audio.shout(pan, dist);
-    else if (kind === 'shot') audio.gunshot(strength > 1.2, pan, dist);
+    else if (kind === 'shot') audio.gunshot(this.lastShotWeapon, pan, dist);
     else audio.crash(strength, pan);
   }
 
@@ -690,6 +700,14 @@ export class GameScene extends Phaser.Scene {
         if (mag > 5) this.hear(cx, cy, 'crash', mag * 0.6);
       }
 
+      // Every shell takes the knock; only yours is worth telling you about.
+      const stageA = va?.damage(mag) ?? null;
+      const stageB = vb?.damage(mag) ?? null;
+      if (playerInvolved) {
+        const stage = va === this.current ? stageA : stageB;
+        if (stage) this.onVehicleStage(stage);
+      }
+
       // A real bang scatters the street, whoever caused it.
       if (mag > 5.5) {
         this.peds.shock(cx, cy, 260);
@@ -705,6 +723,21 @@ export class GameScene extends Phaser.Scene {
         }
         this.heat.add(gain);
       }
+    }
+  }
+
+  /** Punchy, short feedback as the car you are in falls apart. */
+  private onVehicleStage(stage: 'damaged' | 'critical' | 'wrecked') {
+    if (stage === 'wrecked') {
+      this.objectives.announce('WRECKED', 'Find another car', '', 2000);
+      this.session?.audio.cue('wrecked');
+      haptic([0, 50, 60, 50]);
+      this.cameras.main.shake(220, 0.012);
+      return;
+    }
+    if (stage === 'critical') {
+      this.objectives.announce('CRITICAL', 'This one is not going to last', '', 1500);
+      haptic(24);
     }
   }
 
@@ -773,10 +806,12 @@ export class GameScene extends Phaser.Scene {
     this.policing(dt);
     this.crewWar?.update(dt, (winner) => this.onCrewWarEnd(winner));
     this.objectives.update(dt);
+    this.checkDistrict();
     this.setObjective();
     this.updateLocalLabel(dt);
     this.teach(dt);
     this.tyreFx();
+    this.damageFx();
     this.updatePrompt();
     this.network(dt);
     this.updateAudio(time);
@@ -961,6 +996,18 @@ export class GameScene extends Phaser.Scene {
       if (input.firing) this.combat.tryFire(time, this.player.x, this.player.y, this.aim);
     }
 
+    const spec = this.combat.spec;
+    if (spec && this.live && !this.current && !this.vitals.down) {
+      const offset = 9;
+      this.heldWeapon
+        .setVisible(true)
+        .setTexture(`wpn-${spec.id}`)
+        .setPosition(this.player.x + Math.cos(this.aim) * offset, this.player.y + Math.sin(this.aim) * offset)
+        .setRotation(this.aim);
+    } else {
+      this.heldWeapon.setVisible(false);
+    }
+
     // Crewmates are not targets: friendly fire is off by default.
     this.targets.length = 0;
     if (this.remotes) {
@@ -1059,26 +1106,42 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.police.count > 0 && this.heat.value > 0) {
+      const units = this.police.count;
       this.objectives.set({
         kind: 'pursuit',
         title: 'ESCAPE',
         line: 'Lose the pursuit',
-        extra: `HEAT ${this.heat.level}`,
+        extra: `${units} UNIT${units === 1 ? '' : 'S'} ON YOU`,
       });
       return;
     }
 
     if (this.jobs.label) {
+      const dropping = this.jobs.state !== 'offered';
       this.objectives.set({
         kind: 'job',
         title: 'HOT DELIVERY',
-        line: this.jobs.state === 'offered' ? 'Pick up the package' : 'Deliver the package',
+        line: dropping
+          ? `Deliver to ${this.world.districtAt(this.jobs.target.x, this.jobs.target.y).name}`
+          : 'Pick up the package',
         distance: this.jobs.distance / 10,
       });
       return;
     }
 
     this.objectives.free();
+  }
+
+  /** Crossing into another quarter is worth a beat of acknowledgement. */
+  private checkDistrict() {
+    if (this.frame % 20 !== 0) return;
+    const index = this.world.districtIndex(this.focus.x, this.focus.y);
+    if (index === this.district) return;
+    const first = this.district === -1;
+    this.district = index;
+    if (first) return;
+    this.objectives.announce(DISTRICTS[index].name, '', 'ENTERING', 1900);
+    this.session?.audio.cue('district');
   }
 
   private updateLocalLabel(dt: number) {
@@ -1138,9 +1201,11 @@ export class GameScene extends Phaser.Scene {
     h.capture = this.capture.progress;
     h.captured = this.bustedMs > 0;
     h.downed = this.vitals.down;
+    h.announceKicker = this.objectives.announcement?.kicker ?? '';
     h.announceTitle = this.objectives.announcement?.title ?? '';
     h.announceLine = this.objectives.announcement?.line ?? '';
     h.announceAlpha = this.objectives.announceAlpha;
+    h.announcePunch = this.objectives.announcePunch;
     h.navActive = this.jobs.state !== 'off';
     h.navX = this.jobs.target.x;
     h.navY = this.jobs.target.y;
@@ -1165,6 +1230,18 @@ export class GameScene extends Phaser.Scene {
         v.wheelPos(false, Math.random() > 0.5, this.wheel);
         this.effects.tyreDust(this.wheel.x, this.wheel.y);
       }
+    }
+  }
+
+  /** Cars in trouble smoke from the bonnet, wherever they are on screen. */
+  private damageFx() {
+    if (this.frame % 9 !== 0) return;
+    const view = this.cameras.main.worldView;
+    for (const v of this.obstacles) {
+      if (v.dead || v.integrity > 0.45) continue;
+      if (!view.contains(v.x, v.y)) continue;
+      const nose = v.wheelPos(true, false, this.wheel);
+      this.effects.damageSmoke(nose.x, nose.y, v.integrity <= 0.2);
     }
   }
 

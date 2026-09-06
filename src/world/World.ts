@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { COLORS, WORLD } from '../config';
+import { COLORS, District, DISTRICTS, LANDMARKS, WORLD } from '../config';
 import { LaneGrid, WalkGraph } from './Graphs';
 
 export interface Rect {
@@ -20,15 +20,6 @@ interface Span {
   b: number;
 }
 
-const BUILDING_TONES: { wall: number; roof: number; detail: number }[] = [
-  { wall: 0x494857, roof: 0x8e8ca0, detail: 0xb3b1c4 },
-  { wall: 0x5c4239, roof: 0xa8826f, detail: 0xcaa48f },
-  { wall: 0x374757, roof: 0x6f88a0, detail: 0x94abc1 },
-  { wall: 0x484f3a, roof: 0x8a9375, detail: 0xadb599 },
-  { wall: 0x523c48, roof: 0x9a7889, detail: 0xbc9aab },
-  { wall: 0x334e50, roof: 0x6a9296, detail: 0x8fb5b9 },
-  { wall: 0x5d5234, roof: 0xab9a6d, detail: 0xccbc92 },
-];
 
 /** Procedurally generated city block: roads, sidewalks, buildings, props. */
 export class World {
@@ -43,12 +34,17 @@ export class World {
   /** Baked ground layer. Skid marks get stamped straight into it. */
   ground!: Phaser.GameObjects.RenderTexture;
 
+  /** Named places, for signage and for telling a friend where to meet. */
+  landmarks: { name: string; x: number; y: number }[] = [];
+
   /** Road grid used by traffic, and the sidewalk waypoints used by pedestrians. */
   readonly lanes = new LaneGrid();
   walk!: WalkGraph;
   blocks: Rect[] = [];
 
   private rng = new Phaser.Math.RandomDataGenerator([WORLD.seed]);
+  /** Landmark name texts, drawn into the roof layer then discarded. */
+  private pendingLabels: Phaser.GameObjects.Text[] = [];
 
   build(scene: Phaser.Scene) {
     this.layout();
@@ -64,8 +60,14 @@ export class World {
 
     const bg = scene.add.graphics().setVisible(false);
     this.paintBuildings(bg);
+    this.paintLandmarks(scene, bg);
     const roofs = scene.add.renderTexture(0, 0, this.width, this.height).setOrigin(0, 0).setDepth(20);
     roofs.draw(bg, 0, 0);
+    for (const label of this.pendingLabels) {
+      roofs.draw(label, label.x, label.y);
+      label.destroy();
+    }
+    this.pendingLabels.length = 0;
     bg.destroy();
 
     this.spawnProps(scene);
@@ -157,6 +159,22 @@ export class World {
       g.fillRect(0, ry + hw - 9, this.width, 2);
     }
 
+    // Surface history: patches, cracks, drain covers and oil marks. All baked,
+    // so a busier-looking road costs nothing at runtime.
+    for (const rx of WORLD.roadsX) this.paintRoadWear(g, rx, 0, WORLD.roadHalfWidth, this.height, true);
+    for (const ry of WORLD.roadsY) this.paintRoadWear(g, 0, ry, this.width, WORLD.roadHalfWidth, false);
+
+    // stop bars on every intersection approach
+    g.fillStyle(COLORS.line, 0.32);
+    for (const rx of WORLD.roadsX) {
+      for (const ry of WORLD.roadsY) {
+        g.fillRect(rx + 6, ry - hw - 8, hw - 14, 5);
+        g.fillRect(rx - hw + 8, ry + hw + 3, hw - 14, 5);
+        g.fillRect(rx - hw - 8, ry - hw + 8, 5, hw - 14);
+        g.fillRect(rx + hw + 3, ry + 6, 5, hw - 14);
+      }
+    }
+
     // crossing stripes on every intersection approach
     g.fillStyle(COLORS.line, 0.34);
     for (const rx of WORLD.roadsX) {
@@ -172,42 +190,109 @@ export class World {
     }
   }
 
+  /** Patches, cracks, drains and grime down one road. */
+  private paintRoadWear(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    halfW: number,
+    length: number,
+    vertical: boolean,
+  ) {
+    const count = Math.floor(length / 150);
+    for (let i = 0; i < count; i++) {
+      const along = this.rng.between(40, length - 40);
+      const across = this.rng.between(-halfW + 14, halfW - 14);
+      const x = vertical ? cx + across : along;
+      const y = vertical ? along : cy + across;
+
+      const roll = this.rng.frac();
+      if (roll < 0.42) {
+        // resurfaced patch
+        g.fillStyle(0x000000, 0.14);
+        g.fillRect(x - 26, y - 16, this.rng.between(40, 90), this.rng.between(22, 44));
+      } else if (roll < 0.7) {
+        // crack
+        g.fillStyle(0x000000, 0.22);
+        const len = this.rng.between(18, 46);
+        if (vertical) g.fillRect(x, y, 2, len);
+        else g.fillRect(x, y, len, 2);
+      } else if (roll < 0.88) {
+        // drain cover at the kerb
+        const edge = across > 0 ? halfW - 11 : -halfW + 11;
+        const dx = vertical ? cx + edge : x;
+        const dy = vertical ? y : cy + edge;
+        g.fillStyle(0x22252b, 1);
+        g.fillRoundedRect(dx - 7, dy - 5, 14, 10, 2);
+        g.fillStyle(0x000000, 0.5);
+        for (let l = 0; l < 3; l++) g.fillRect(dx - 5, dy - 3 + l * 3, 10, 1);
+      } else {
+        // oil stain
+        g.fillStyle(0x000000, 0.16);
+        g.fillCircle(x, y, this.rng.between(7, 15));
+      }
+    }
+  }
+
   private paintBlocks(g: Phaser.GameObjects.Graphics) {
     const pad = WORLD.sidewalk;
     for (const b of this.blocks) {
-      // sidewalk slab
-      g.fillStyle(COLORS.sidewalk, 1);
+      const d = this.districtAt(b.x + b.w / 2, b.y + b.h / 2);
+
+      // pavement slab, tinted per district
+      g.fillStyle(d.pavement, 1);
       g.fillRect(b.x, b.y, b.w, b.h);
+
+      // kerb: a bright edge and a dark shadow line, so the drop reads
       g.fillStyle(COLORS.sidewalkEdge, 1);
       g.fillRect(b.x, b.y, b.w, 3);
-      g.fillRect(b.x, b.y + b.h - 3, b.w, 3);
+      g.fillRect(b.x, b.y + b.h - 4, b.w, 4);
       g.fillRect(b.x, b.y, 3, b.h);
-      g.fillRect(b.x + b.w - 3, b.y, 3, b.h);
+      g.fillRect(b.x + b.w - 4, b.y, 4, b.h);
+      g.fillStyle(0x000000, 0.22);
+      g.fillRect(b.x, b.y + b.h - 6, b.w, 2);
+      g.fillRect(b.x + b.w - 6, b.y, 2, b.h);
 
-      // paving joints
-      g.fillStyle(0x000000, 0.09);
+      // paving joints and a little wear
+      g.fillStyle(0x000000, 0.1);
       for (let x = b.x + 34; x < b.x + b.w; x += 34) g.fillRect(x, b.y, 1, b.h);
       for (let y = b.y + 34; y < b.y + b.h; y += 34) g.fillRect(b.x, y, b.w, 1);
+      g.fillStyle(0xffffff, 0.04);
+      for (let i = 0; i < 14; i++) {
+        g.fillRect(
+          this.rng.between(b.x + 6, b.x + b.w - 30),
+          this.rng.between(b.y + 6, b.y + b.h - 20),
+          this.rng.between(12, 28),
+          this.rng.between(3, 9),
+        );
+      }
+
+      // painted kerb accents at the corners, in the district colour
+      g.fillStyle(d.accent, 0.5);
+      g.fillRect(b.x + 6, b.y + 5, 44, 3);
+      g.fillRect(b.x + b.w - 50, b.y + b.h - 8, 44, 3);
 
       const lot: Rect = { x: b.x + pad, y: b.y + pad, w: b.w - pad * 2, h: b.h - pad * 2 };
       if (lot.w < 80 || lot.h < 80) continue;
 
       const roll = this.rng.frac();
-      if (roll < 0.16) {
-        this.paintPark(g, lot);
-      } else if (roll < 0.28) {
-        this.paintCarPark(g, lot);
+      if (roll < d.green) {
+        this.paintPark(g, lot, d);
+      } else if (roll < d.green + 0.14) {
+        this.paintCarPark(g, lot, d);
       } else {
-        g.fillStyle(COLORS.lot, 1);
+        g.fillStyle(d.lot, 1);
         g.fillRect(lot.x, lot.y, lot.w, lot.h);
         this.splitLot(lot, 0);
       }
     }
   }
 
-  private paintPark(g: Phaser.GameObjects.Graphics, lot: Rect) {
+  private paintPark(g: Phaser.GameObjects.Graphics, lot: Rect, d: District) {
     g.fillStyle(COLORS.grass, 1);
     g.fillRect(lot.x, lot.y, lot.w, lot.h);
+    g.fillStyle(d.accent, 0.16);
+    g.fillRect(lot.x, lot.y, lot.w, 5);
     g.fillStyle(0x5d9166, 0.55);
     for (let i = 0; i < 26; i++) {
       g.fillCircle(
@@ -229,10 +314,12 @@ export class World {
     }
   }
 
-  private paintCarPark(g: Phaser.GameObjects.Graphics, lot: Rect) {
-    g.fillStyle(0x4b4f59, 1);
+  private paintCarPark(g: Phaser.GameObjects.Graphics, lot: Rect, d: District) {
+    g.fillStyle(0x40444c, 1);
     g.fillRect(lot.x, lot.y, lot.w, lot.h);
-    g.fillStyle(COLORS.line, 0.55);
+    g.fillStyle(d.accent, 0.5);
+    g.fillRect(lot.x, lot.y, lot.w, 4);
+    g.fillStyle(COLORS.line, 0.6);
     for (let x = lot.x + 30; x < lot.x + lot.w - 20; x += 44) {
       g.fillRect(x, lot.y + 16, 2, 54);
       g.fillRect(x, lot.y + lot.h - 70, 2, 54);
@@ -275,97 +362,237 @@ export class World {
 
   private paintBuildings(g: Phaser.GameObjects.Graphics) {
     for (const b of this.buildings) {
-      const tone = BUILDING_TONES[this.rng.between(0, BUILDING_TONES.length - 1)];
-      const storeys = this.rng.between(2, 6);
-      const lift = Phaser.Math.Clamp(storeys * 2.6, 5, 16);
+      const d = this.districtAt(b.x + b.w / 2, b.y + b.h / 2);
+      const wall = d.walls[this.rng.between(0, d.walls.length - 1)];
+      const roof = d.roofs[this.rng.between(0, d.roofs.length - 1)];
+      const detail = d.details[this.rng.between(0, d.details.length - 1)];
+      const storeys = this.rng.between(2, 7);
+      const lift = Phaser.Math.Clamp(storeys * 2.8, 6, 20);
 
       // ground shadow, cast down-right
-      g.fillStyle(0x000000, 0.32);
+      g.fillStyle(0x000000, 0.36);
       g.fillRoundedRect(b.x + lift * 0.9, b.y + lift * 1.25, b.w, b.h, 4);
 
-      // wall block, then the roof face offset up-left to fake height
-      g.fillStyle(tone.wall, 1);
+      // walls, then the roof face offset up-left to fake height
+      g.fillStyle(wall, 1);
       g.fillRoundedRect(b.x, b.y, b.w, b.h, 3);
       const rx = b.x - lift * 0.18;
       const ry = b.y - lift * 0.5;
       const rw = b.w - lift * 0.5;
       const rh = b.h - lift * 0.5;
-      g.fillStyle(tone.roof, 1);
+      g.fillStyle(roof, 1);
       g.fillRoundedRect(rx, ry, rw, rh, 3);
 
+      this.paintRoofKit(g, rx, ry, rw, rh, detail, d);
+
       // parapet: light on the top-left, dark on the bottom-right
-      g.lineStyle(2, 0xffffff, 0.1);
+      g.lineStyle(2, 0xffffff, 0.12);
       g.beginPath();
       g.moveTo(rx + 2, ry + rh - 2);
       g.lineTo(rx + 2, ry + 2);
       g.lineTo(rx + rw - 2, ry + 2);
       g.strokePath();
-      g.lineStyle(2, 0x000000, 0.18);
+      g.lineStyle(2, 0x000000, 0.24);
       g.beginPath();
       g.moveTo(rx + rw - 2, ry + 2);
       g.lineTo(rx + rw - 2, ry + rh - 2);
       g.lineTo(rx + 2, ry + rh - 2);
       g.strokePath();
 
-      // roof furniture
-      const units = this.rng.between(1, 3);
-      for (let i = 0; i < units; i++) {
-        const uw = this.rng.between(16, Math.max(20, Math.floor(rw * 0.26)));
-        const uh = this.rng.between(14, Math.max(18, Math.floor(rh * 0.24)));
-        const ux = this.rng.between(rx + 14, Math.max(rx + 15, rx + rw - uw - 14));
-        const uy = this.rng.between(ry + 14, Math.max(ry + 15, ry + rh - uh - 14));
-        g.fillStyle(0x000000, 0.22);
-        g.fillRoundedRect(ux + 4, uy + 5, uw, uh, 2);
-        g.fillStyle(tone.detail, 1);
-        g.fillRoundedRect(ux, uy, uw, uh, 2);
-        g.fillStyle(0xffffff, 0.08);
-        g.fillRect(ux + 2, uy + 2, uw - 4, 3);
-      }
+      this.paintFrontage(g, b, d);
 
-      // roof hatch / skylight strip for a bit of texture
-      if (rw > 120 && rh > 90) {
-        g.fillStyle(0xffffff, 0.05);
-        g.fillRect(rx + 10, ry + rh * 0.62, rw - 20, 6);
-      }
-
-      g.lineStyle(1.5, 0x14161b, 0.45);
+      g.lineStyle(1.5, 0x14161b, 0.5);
       g.strokeRoundedRect(b.x, b.y, b.w, b.h, 3);
     }
   }
 
-  private spawnProps(scene: Phaser.Scene) {
-    // street furniture along the kerb of every block
-    for (const b of this.blocks) {
-      const step = 132;
-      for (let x = b.x + 60; x < b.x + b.w - 40; x += step) {
-        this.pushKerbProp(x, b.y + 13);
-        this.pushKerbProp(x + 46, b.y + b.h - 13);
+  /** Vents, skylights, tanks and roof markings — the stuff you look down on. */
+  private paintRoofKit(
+    g: Phaser.GameObjects.Graphics,
+    rx: number,
+    ry: number,
+    rw: number,
+    rh: number,
+    detail: number,
+    d: District,
+  ) {
+    const units = this.rng.between(2, 5);
+    for (let i = 0; i < units; i++) {
+      const kind = this.rng.frac();
+      const uw = this.rng.between(12, Math.max(16, Math.floor(rw * 0.24)));
+      const uh = this.rng.between(10, Math.max(14, Math.floor(rh * 0.22)));
+      const ux = this.rng.between(rx + 12, Math.max(rx + 13, rx + rw - uw - 12));
+      const uy = this.rng.between(ry + 12, Math.max(ry + 13, ry + rh - uh - 12));
+
+      g.fillStyle(0x000000, 0.26);
+      g.fillRoundedRect(ux + 4, uy + 5, uw, uh, 2);
+
+      if (kind < 0.42) {
+        // plant housing
+        g.fillStyle(detail, 1);
+        g.fillRoundedRect(ux, uy, uw, uh, 2);
+        g.fillStyle(0x000000, 0.2);
+        for (let v = ux + 3; v < ux + uw - 2; v += 4) g.fillRect(v, uy + 2, 2, uh - 4);
+      } else if (kind < 0.68) {
+        // skylight
+        g.fillStyle(0x1d2733, 1);
+        g.fillRoundedRect(ux, uy, uw, uh, 2);
+        g.fillStyle(0xbfe4ff, 0.28);
+        g.fillRoundedRect(ux + 2, uy + 2, uw - 4, uh - 4, 1.5);
+      } else if (kind < 0.86) {
+        // water tank
+        g.fillStyle(detail, 1);
+        g.fillCircle(ux + uw / 2, uy + uh / 2, Math.min(uw, uh) / 2);
+        g.fillStyle(0x000000, 0.22);
+        g.fillCircle(ux + uw / 2, uy + uh / 2, Math.min(uw, uh) / 4);
+      } else {
+        // roof hatch
+        g.fillStyle(d.accent, 0.85);
+        g.fillRoundedRect(ux, uy, uw, uh * 0.7, 2);
       }
-      for (let y = b.y + 60; y < b.y + b.h - 40; y += step) {
-        this.pushKerbProp(b.x + 13, y + 46);
-        this.pushKerbProp(b.x + b.w - 13, y);
+    }
+
+    // service walkway across bigger roofs
+    if (rw > 130 && rh > 100) {
+      g.fillStyle(0xffffff, 0.06);
+      g.fillRect(rx + 10, ry + rh * 0.58, rw - 20, 7);
+      g.fillStyle(0x000000, 0.12);
+      g.fillRect(rx + 10, ry + rh * 0.58 + 7, rw - 20, 2);
+    }
+  }
+
+  /** Shop fronts, shutters and loading bays where a building meets the street. */
+  private paintFrontage(g: Phaser.GameObjects.Graphics, b: Rect, d: District) {
+    const industrial = this.rng.frac() < d.industrial;
+    const bays = Math.max(1, Math.floor(b.w / 90));
+
+    for (let i = 0; i < bays; i++) {
+      const w = b.w / bays;
+      const x = b.x + i * w + w * 0.18;
+      const bw = w * 0.64;
+      const y = b.y + b.h - 9;
+
+      if (industrial) {
+        // roller shutter with a painted bay number stripe
+        g.fillStyle(0x000000, 0.3);
+        g.fillRect(x, y - 5, bw, 12);
+        g.fillStyle(0x8f959d, 1);
+        g.fillRect(x, y - 4, bw, 10);
+        g.fillStyle(0x000000, 0.22);
+        for (let l = y - 3; l < y + 5; l += 3) g.fillRect(x, l, bw, 1);
+        g.fillStyle(d.accent, 0.9);
+        g.fillRect(x, y + 6, bw, 2);
+      } else {
+        // lit shopfront: awning bar over glass
+        g.fillStyle(0x1d2733, 1);
+        g.fillRect(x, y - 4, bw, 10);
+        g.fillStyle(0xffe6b0, 0.32);
+        g.fillRect(x + 2, y - 2, bw - 4, 6);
+        g.fillStyle(d.accent, 0.85);
+        g.fillRect(x - 2, y - 8, bw + 4, 4);
+      }
+    }
+  }
+
+  /**
+   * Names the biggest building in each quarter and paints the name on its
+   * roof. That is the whole navigation system: "meet me at the depot".
+   */
+  private paintLandmarks(scene: Phaser.Scene, g: Phaser.GameObjects.Graphics) {
+    const used = new Set<number>();
+    for (const spec of LANDMARKS) {
+      let best = -1;
+      let bestArea = 0;
+      for (let i = 0; i < this.buildings.length; i++) {
+        if (used.has(i)) continue;
+        const b = this.buildings[i];
+        if (this.districtIndex(b.x + b.w / 2, b.y + b.h / 2) !== spec.district) continue;
+        const area = Math.min(b.w, b.h) * 2 + b.w + b.h;
+        if (b.w < 150 || b.h < 110 || area <= bestArea) continue;
+        bestArea = area;
+        best = i;
+      }
+      if (best < 0) continue;
+      used.add(best);
+
+      const b = this.buildings[best];
+      const cx = b.x + b.w / 2;
+      const cy = b.y + b.h / 2;
+      const d = DISTRICTS[spec.district];
+
+      // painted panel and name, baked straight into the roof layer
+      g.fillStyle(0x000000, 0.3);
+      g.fillRect(b.x + 12, cy - 16, b.w - 24, 32);
+      g.fillStyle(d.accent, 0.22);
+      g.fillRect(b.x + 12, cy - 16, b.w - 24, 32);
+      g.fillStyle(d.accent, 0.9);
+      g.fillRect(b.x + 12, cy + 14, b.w - 24, 3);
+
+      const size = Math.max(13, Math.min(24, Math.floor(b.w / (spec.name.length * 0.62))));
+      const label = scene.add
+        .text(cx, cy - 2, spec.name, {
+          fontFamily: 'ui-monospace, Menlo, monospace',
+          fontSize: `${size}px`,
+          color: '#f4f7ff',
+        })
+        .setOrigin(0.5)
+        .setVisible(false);
+      label.setLetterSpacing?.(Math.round(size * 0.22));
+      this.pendingLabels.push(label);
+      this.landmarks.push({ name: spec.name, x: cx, y: cy });
+    }
+  }
+
+  private spawnProps(scene: Phaser.Scene) {
+    // street furniture along the kerb of every block, chosen per district
+    for (const b of this.blocks) {
+      const d = this.districtAt(b.x + b.w / 2, b.y + b.h / 2);
+      const step = WORLD.propStep;
+      for (let x = b.x + 54; x < b.x + b.w - 40; x += step) {
+        this.pushKerbProp(x, b.y + 13, d);
+        this.pushKerbProp(x + 42, b.y + b.h - 13, d);
+      }
+      for (let y = b.y + 54; y < b.y + b.h - 40; y += step) {
+        this.pushKerbProp(b.x + 13, y + 42, d);
+        this.pushKerbProp(b.x + b.w - 13, y, d);
       }
       this.collectParking(b);
     }
 
     for (const p of this.props) {
       const shadow = scene.add.image(p.x + 5, p.y + 7, p.key);
-      shadow.setTint(0x000000).setAlpha(0.28).setDepth(6);
+      shadow.setTint(0x000000).setAlpha(p.key === 'lamp' ? 0.22 : 0.4).setDepth(6);
       if (p.key === 'tree') shadow.setScale(0.95);
       const img = scene.add.image(p.x, p.y, p.key).setDepth(9);
-      if (p.key === 'lamp') {
-        shadow.setAlpha(0.2);
-        img.setDepth(19);
-      }
+      if (p.key === 'lamp') img.setDepth(19);
     }
   }
 
-  private pushKerbProp(x: number, y: number) {
+  /** The mix of street furniture is most of what tells the quarters apart. */
+  private pushKerbProp(x: number, y: number, d: District) {
     if (x < 20 || y < 20 || x > this.width - 20 || y > this.height - 20) return;
     const roll = this.rng.frac();
-    if (roll < 0.45) this.props.push({ x, y, key: 'tree', solid: true });
-    else if (roll < 0.68) this.props.push({ x, y, key: 'planter', solid: true });
-    else if (roll < 0.86) this.props.push({ x, y, key: 'lamp', solid: false });
+    if (roll > 0.9) {
+      this.props.push({ x, y, key: 'lamp', solid: false });
+      return;
+    }
+    if (roll > 0.78) return; // leave gaps so the pavement is walkable
+
+    const industrial = this.rng.frac() < d.industrial;
+    const green = this.rng.frac() < d.green + 0.25;
+    let key: string;
+    if (industrial) {
+      const pick = this.rng.frac();
+      key = pick < 0.34 ? 'dumpster' : pick < 0.62 ? 'pallet' : pick < 0.82 ? 'barrier' : 'utility';
+    } else if (d.name === 'NIGHT MARKET' && this.rng.frac() < 0.45) {
+      key = 'stall';
+    } else if (green) {
+      key = this.rng.frac() < 0.7 ? 'tree' : 'planter';
+    } else {
+      const pick = this.rng.frac();
+      key = pick < 0.4 ? 'bench' : pick < 0.7 ? 'planter' : 'utility';
+    }
+    this.props.push({ x, y, key, solid: true });
   }
 
   /** Kerbside parking bays, parallel to the adjacent road. */
@@ -398,13 +625,25 @@ export class World {
     }
     for (const p of this.props) {
       if (!p.solid) continue;
-      scene.matter.add.circle(p.x, p.y, p.key === 'tree' ? 15 : 16, {
-        isStatic: true,
-        label: 'prop',
-        restitution: 0.3,
-      });
+      const radius = p.key === 'tree' ? 15 : p.key === 'bench' || p.key === 'barrier' ? 13 : 16;
+      scene.matter.add.circle(p.x, p.y, radius, { isStatic: true, label: 'prop', restitution: 0.3 });
     }
     scene.matter.world.setBounds(0, 0, this.width, this.height, 96);
+  }
+
+  /**
+   * Which quarter of the city a point is in. The boundaries fall on the main
+   * roads, so the change of materials reads as crossing a street rather than
+   * as a seam in a texture.
+   */
+  districtIndex(x: number, y: number): number {
+    const east = x > this.width * 0.5 ? 1 : 0;
+    const south = y > this.height * 0.5 ? 1 : 0;
+    return south * 2 + east;
+  }
+
+  districtAt(x: number, y: number): District {
+    return DISTRICTS[this.districtIndex(x, y)];
   }
 
   /** Cheap line-of-fire test: bullets stop at buildings, not at kerbs. */

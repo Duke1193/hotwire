@@ -19,7 +19,11 @@ export type Cue =
   | 'escaped'
   | 'playerJoined'
   | 'heatRunStart'
-  | 'heatRunWin';
+  | 'heatRunWin'
+  | 'district'
+  | 'pickup'
+  | 'down'
+  | 'wrecked';
 
 interface Note {
   f: number;
@@ -82,6 +86,35 @@ const CUES: Record<Cue, { notes: Note[]; volume: number }> = {
       { f: 349, at: 0, len: 0.1, type: 'square' },
       { f: 523, at: 0.1, len: 0.1, type: 'square' },
       { f: 698, at: 0.2, len: 0.22, type: 'square' },
+    ],
+  },
+  district: {
+    volume: 0.055,
+    notes: [
+      { f: 294, at: 0, len: 0.07, type: 'square' },
+      { f: 392, at: 0.07, len: 0.14, type: 'square' },
+    ],
+  },
+  pickup: {
+    volume: 0.07,
+    notes: [
+      { f: 784, at: 0, len: 0.05 },
+      { f: 1175, at: 0.05, len: 0.1 },
+    ],
+  },
+  down: {
+    volume: 0.085,
+    notes: [
+      { f: 220, at: 0, len: 0.16, type: 'sawtooth' },
+      { f: 147, at: 0.15, len: 0.34, type: 'sawtooth' },
+    ],
+  },
+  wrecked: {
+    volume: 0.09,
+    notes: [
+      { f: 165, at: 0, len: 0.12, type: 'square' },
+      { f: 123, at: 0.11, len: 0.14, type: 'square' },
+      { f: 82, at: 0.23, len: 0.4, type: 'sawtooth' },
     ],
   },
   heatRunWin: {
@@ -306,17 +339,30 @@ export class AudioBus {
   }
 
   crash(strength: number, pan = 0) {
-    // light knocks are duller and quieter than a real hit
+    // Short, hard and a little crunchy: the hit should land, not rumble on.
     const heavy = strength > 6;
-    this.burst(heavy ? 0.4 : 0.22, Math.min(0.3, 0.045 + strength * 0.032), pan, heavy ? 220 : 420, heavy ? 0.7 : 1.4);
-    if (heavy) this.blip(70, 0.26, 0.07, pan, 'sawtooth');
+    const vol = Math.min(0.34, 0.06 + strength * 0.036);
+    this.burst(heavy ? 0.3 : 0.16, vol, pan, heavy ? 190 : 480, heavy ? 0.6 : 1.6);
+    // metallic edge on top of the body of the impact
+    this.burst(0.07, vol * 0.6, pan, heavy ? 1900 : 2600, 5);
+    if (heavy) this.blip(62, 0.22, 0.085, pan, 'sawtooth');
   }
 
-  /** Short, dry report; the shotgun gets a heavier body. */
-  gunshot(heavy: boolean, pan = 0, distance = 0) {
-    const vol = (heavy ? 0.075 : 0.05) * falloff(distance);
-    this.burst(heavy ? 0.17 : 0.09, vol, pan, heavy ? 620 : 1500, heavy ? 1.1 : 2.2);
-    if (heavy) this.blip(90, 0.12, vol * 0.7, pan, 'sawtooth');
+  /** Each weapon gets its own report so you can hear what is shooting at you. */
+  gunshot(weapon: 'pistol' | 'auto' | 'shotgun', pan = 0, distance = 0) {
+    const near = falloff(distance);
+    if (weapon === 'shotgun') {
+      this.burst(0.2, 0.085 * near, pan, 560, 0.9);
+      this.blip(84, 0.14, 0.06 * near, pan, 'sawtooth');
+      return;
+    }
+    if (weapon === 'auto') {
+      this.burst(0.06, 0.038 * near, pan, 2100, 3.2);
+      this.blip(180, 0.05, 0.03 * near, pan, 'square');
+      return;
+    }
+    this.burst(0.1, 0.055 * near, pan, 1250, 2);
+    this.blip(140, 0.07, 0.035 * near, pan, 'square');
   }
 
   shout(pan = 0, distance = 0) {

@@ -16,6 +16,8 @@ export interface Objective {
 }
 
 export interface Announcement {
+  /** Small line above the headline, e.g. ENTERING. */
+  kicker?: string;
   title: string;
   line: string;
 }
@@ -55,9 +57,10 @@ export class Objectives {
   }
 
   /** Force a notification without changing the persistent card. */
-  announce(title: string, line: string) {
-    this.announcement = { title, line };
-    this.announceMs = 2600;
+  announce(title: string, line = '', kicker = '', ms = 2600) {
+    this.announcement = { kicker, title, line };
+    this.announceMs = ms;
+    this.announceTotal = ms;
   }
 
   update(dtMs: number) {
@@ -66,11 +69,20 @@ export class Objectives {
     if (this.announceMs <= 0) this.announcement = null;
   }
 
-  /** 0..1, used to fade the centre notification in and out. */
+  private announceTotal = 2600;
+
+  /** 0..1, snapping in fast and easing out — arcade, not cinematic. */
   get announceAlpha(): number {
     if (this.announceMs <= 0) return 0;
-    if (this.announceMs > 2200) return (2600 - this.announceMs) / 400;
-    if (this.announceMs < 450) return this.announceMs / 450;
+    const elapsed = this.announceTotal - this.announceMs;
+    if (elapsed < 90) return elapsed / 90;
+    if (this.announceMs < 380) return this.announceMs / 380;
     return 1;
+  }
+
+  /** 0..1 for a quick scale punch as a notification lands. */
+  get announcePunch(): number {
+    const elapsed = this.announceTotal - this.announceMs;
+    return elapsed < 220 ? 1 - elapsed / 220 : 0;
   }
 }

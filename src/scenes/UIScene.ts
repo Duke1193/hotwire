@@ -35,11 +35,13 @@ export class UIScene extends Phaser.Scene {
   private teach!: Phaser.GameObjects.Text;
   private hint!: Phaser.GameObjects.Text;
   private alert!: Phaser.GameObjects.Text;
+  private annKicker!: Phaser.GameObjects.Text;
   private annTitle!: Phaser.GameObjects.Text;
   private annLine!: Phaser.GameObjects.Text;
   private captureText!: Phaser.GameObjects.Text;
   private title!: Phaser.GameObjects.Text;
   private nav!: Phaser.GameObjects.Image;
+  private vignette!: Phaser.GameObjects.Image;
   private touch!: TouchControls;
 
   private shownHeat = 0;
@@ -80,8 +82,10 @@ export class UIScene extends Phaser.Scene {
 
     this.alert = this.add.text(0, 0, '', { fontFamily: MONO, fontSize: px(17), color: '#ff8f6b' }).setOrigin(0.5, 0);
 
-    this.annTitle = this.add.text(0, 0, '', { fontFamily: MONO, fontSize: px(30), color: '#f4f7ff' }).setOrigin(0.5, 1);
-    this.annTitle.setLetterSpacing?.(7 * S);
+    this.annKicker = this.add.text(0, 0, '', { fontFamily: MONO, fontSize: px(12), color: '#8e97ab' }).setOrigin(0.5, 1);
+    this.annKicker.setLetterSpacing?.(6 * S);
+    this.annTitle = this.add.text(0, 0, '', { fontFamily: MONO, fontSize: px(34), color: '#f4f7ff' }).setOrigin(0.5, 1);
+    this.annTitle.setLetterSpacing?.(8 * S);
     this.annLine = this.add.text(0, 0, '', { fontFamily: MONO, fontSize: px(14), color: '#cfe6ff' }).setOrigin(0.5, 0);
     this.annLine.setLetterSpacing?.(2 * S);
 
@@ -94,6 +98,9 @@ export class UIScene extends Phaser.Scene {
 
     this.title = this.add.text(0, 0, 'GETAWAY', { fontFamily: MONO, fontSize: px(46), color: '#f2f5fb' }).setOrigin(0.5);
     this.title.setLetterSpacing?.(10 * S);
+
+    // Sits under every HUD element and over the world.
+    this.vignette = this.add.image(0, 0, 'vignette').setOrigin(0, 0).setDepth(-5).setAlpha(0.85);
 
     this.touch = new TouchControls(this, RENDER_SCALE);
 
@@ -121,6 +128,7 @@ export class UIScene extends Phaser.Scene {
     this.region.bottom = h - 16 * S - inset.bottom * RENDER_SCALE;
     this.region.cx = w / 2;
     this.region.cy = h / 2;
+    this.vignette?.setDisplaySize(this.scale.width, this.scale.height);
     this.touch?.layout();
     this.place();
   }
@@ -158,8 +166,10 @@ export class UIScene extends Phaser.Scene {
     this.hint.setPosition(r.left, this.scale.height - 14 * S);
 
     this.alert.setPosition(r.cx, r.top + 6 * S);
-    this.annTitle.setPosition(r.cx, this.scale.height * 0.36);
-    this.annLine.setPosition(r.cx, this.scale.height * 0.36 + 8 * S);
+    const annY = this.scale.height * 0.3;
+    this.annKicker.setPosition(r.cx, annY - this.annTitle.height - 6 * S);
+    this.annTitle.setPosition(r.cx, annY);
+    this.annLine.setPosition(r.cx, annY + 8 * S);
     this.title.setPosition(r.cx, this.scale.height * 0.32);
   }
 
@@ -168,7 +178,9 @@ export class UIScene extends Phaser.Scene {
     if (!hud) return;
 
     if (hud.live) this.introMs += delta;
-    this.title.setAlpha(1 - clamp((this.introMs - 1600) / 1300, 0, 1));
+    // The intro title steps aside the moment the game has something to say.
+    const introFade = 1 - clamp((this.introMs - 1600) / 1300, 0, 1);
+    this.title.setAlpha(introFade * (1 - hud.announceAlpha));
     if (!hasTouch) this.hint.setAlpha(clamp((this.introMs - 300) / 800, 0, 1) * 0.9);
 
     this.touch.setEnabled(hasTouch && hud.live);
@@ -183,6 +195,7 @@ export class UIScene extends Phaser.Scene {
     this.g.clear();
     this.drawHeatBar(hud);
     this.drawVitals(hud);
+    this.drawDriverPlate(hud);
     this.drawCapture(hud);
     this.drawNav(hud);
 
@@ -190,6 +203,7 @@ export class UIScene extends Phaser.Scene {
     this.status.setColor(hud.status === 'pursuit' ? '#ff6b5e' : hud.status === 'evading' ? '#ffd06b' : '#7d879b');
 
     this.score.setText(`SCORE ${Math.round(this.shownScore).toLocaleString('en-US')}`);
+    this.score.setColor(hud.scorePulse > 0.02 ? '#ffffff' : '#eef2fb');
     this.score.setScale(1 + hud.scorePulse * 0.09);
     this.scoreGain.setText(hud.scorePulse > 0.02 ? hud.scoreReason : '').setAlpha(clamp(hud.scorePulse, 0, 1));
 
@@ -202,27 +216,39 @@ export class UIScene extends Phaser.Scene {
     this.teach.setText(hud.teach);
     this.alert.setText(hud.alert).setAlpha(hud.alertAlpha);
 
-    this.annTitle.setText(hud.announceTitle).setAlpha(hud.announceAlpha);
+    // Snap in with a small scale punch, then settle: arcade, not cinematic.
+    const punch = 1 + hud.announcePunch * 0.16;
+    this.annKicker.setText(hud.announceKicker).setAlpha(hud.announceAlpha * 0.9);
+    this.annTitle.setText(hud.announceTitle).setAlpha(hud.announceAlpha).setScale(punch);
     this.annLine.setText(hud.announceLine).setAlpha(hud.announceAlpha * 0.9);
   }
 
   // ------------------------------------------------------------- painting
 
+  /** A flat dark plate with a hairline edge: the HUD's one repeated shape. */
+  private plate(x: number, y: number, w: number, h: number, accent = 0x39415a, alpha = 0.78) {
+    this.g.fillStyle(0x080a0f, alpha);
+    this.g.fillRect(x, y, w, h);
+    this.g.fillStyle(accent, 0.85);
+    this.g.fillRect(x, y, 3 * S, h);
+    this.g.lineStyle(1 * S, 0x39415a, 0.75);
+    this.g.strokeRect(x, y, w, h);
+  }
+
   private drawHeatBar(hud: GameScene['hud']) {
     const x = this.region.left;
     const y = this.region.top + 20 * S;
     const w = Math.min(250 * S, this.scale.width * 0.34);
-    const h = 15 * S;
+    const h = 19 * S;
     const t = this.shownHeat / HEAT.max;
     const colour = LEVEL_COLORS[Math.min(hud.heatLevel, LEVEL_COLORS.length - 1)];
 
-    this.g.fillStyle(0x0b0e14, 0.72);
-    this.g.fillRoundedRect(x - 8 * S, y - 8 * S, w + 16 * S, h + 16 * S, 5 * S);
-    this.g.lineStyle(1 * S, 0x39415a, 0.9);
-    this.g.strokeRoundedRect(x - 8 * S, y - 8 * S, w + 16 * S, h + 16 * S, 5 * S);
+    this.plate(x - 9 * S, y - 26 * S, w + 30 * S, h + 36 * S, colour);
 
-    this.g.fillStyle(0x1a1f2c, 1);
+    this.g.fillStyle(0x141822, 1);
     this.g.fillRect(x, y, w, h);
+    this.g.lineStyle(1 * S, 0x000000, 0.6);
+    this.g.strokeRect(x, y, w, h);
 
     const fillW = w * t;
     this.g.fillStyle(colour, 0.92);
@@ -235,8 +261,9 @@ export class UIScene extends Phaser.Scene {
       this.g.fillRect(x, y, fillW, h);
     }
 
-    this.g.fillStyle(0x0b0e14, 0.85);
-    for (let i = 1; i < 20; i++) this.g.fillRect(x + (w / 20) * i, y, 2 * S, h);
+    // chunky segment gaps: reads as a row of blocks, not a smooth bar
+    this.g.fillStyle(0x080a0f, 0.9);
+    for (let i = 1; i < 16; i++) this.g.fillRect(x + (w / 16) * i - 1 * S, y, 3 * S, h);
 
     for (const th of HEAT.thresholds) {
       const tx = x + w * (th / HEAT.max);
@@ -256,27 +283,42 @@ export class UIScene extends Phaser.Scene {
   /** Health and armour, directly under the score so the eye finds them. */
   private drawVitals(hud: GameScene['hud']) {
     const x = this.region.left;
-    const y = this.region.top + 112 * S;
+    const y = this.region.top + 118 * S;
     const w = Math.min(150 * S, this.scale.width * 0.22);
-    const h = 6 * S;
-
-    this.g.fillStyle(0x1a1f2c, 0.9);
-    this.g.fillRect(x, y, w, h);
+    const h = 9 * S;
     const health = hud.health <= 0.3 ? 0xff4d3d : hud.health <= 0.6 ? 0xffb347 : 0x7ee0a1;
+
+    this.plate(x - 6 * S, y - 6 * S, w + 12 * S, h * 2 + 18 * S, health, 0.7);
+
+    this.g.fillStyle(0x141822, 1);
+    this.g.fillRect(x, y, w, h);
     this.g.fillStyle(health, hud.protected ? 0.6 : 1);
     this.g.fillRect(x, y, w * clamp(hud.health, 0, 1), h);
+    this.g.fillStyle(0xffffff, 0.14);
+    this.g.fillRect(x, y, w * clamp(hud.health, 0, 1), 2 * S);
 
+    const ay = y + h + 4 * S;
+    this.g.fillStyle(0x141822, 1);
+    this.g.fillRect(x, ay, w, h * 0.66);
     if (hud.armor > 0.001) {
-      this.g.fillStyle(0x1a1f2c, 0.9);
-      this.g.fillRect(x, y + h + 3 * S, w, h * 0.7);
       this.g.fillStyle(0x9fb6ff, 1);
-      this.g.fillRect(x, y + h + 3 * S, w * clamp(hud.armor, 0, 1), h * 0.7);
+      this.g.fillRect(x, ay, w * clamp(hud.armor, 0, 1), h * 0.66);
     }
 
     if (hud.protected) {
-      this.g.lineStyle(1 * S, 0x69d8ff, 0.7);
-      this.g.strokeRect(x - 2 * S, y - 2 * S, w + 4 * S, h + 4 * S);
+      this.g.lineStyle(1.5 * S, 0x69d8ff, 0.8);
+      this.g.strokeRect(x - 3 * S, y - 3 * S, w + 6 * S, h + 6 * S);
     }
+  }
+
+  /** A plate under the speed and weapon so they read against a bright street. */
+  private drawDriverPlate(hud: GameScene['hud']) {
+    const pad = 8 * S;
+    const right = this.region.right + pad * 0.6;
+    const top = (hud.weapon ? this.weapon.getBounds().y : this.speed.getBounds().y) - pad * 0.5;
+    const bottom = this.speedUnit.getBounds().y + this.speedUnit.getBounds().height + pad * 0.4;
+    const left = Math.min(this.speed.getBounds().x, hud.weapon ? this.weapon.getBounds().x : Infinity) - pad;
+    this.plate(left, top, right - left, bottom - top, hud.driving ? 0x69d8ff : 0x39415a, 0.62);
   }
 
   /** The arrest meter: five blocks that fill while you are being held. */

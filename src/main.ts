@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CAM, PEDS, TRAFFIC } from './config';
+import { CAM, PEDS, TRAFFIC, WORLD } from './config';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
@@ -21,10 +21,11 @@ track('game_loaded');
 if (isMobile) {
   // A phone screen is small but the player still needs to see a junction
   // coming, so the camera pulls back to roughly the desktop field of view.
-  CAM.zoomFoot = 1.0;
-  CAM.zoomCar = 0.92;
-  CAM.zoomFast = 0.72;
+  CAM.zoomFoot = 1.24;
+  CAM.zoomCar = 1.12;
+  CAM.zoomFast = 0.9;
 
+  WORLD.propStep = 150;
   PEDS.count = 44;
   PEDS.despawn = 1000;
   PEDS.spawnMin = 520;

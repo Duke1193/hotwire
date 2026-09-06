@@ -30,6 +30,7 @@ export class Jobs {
   readonly target = new Phaser.Math.Vector2();
   private from = new Phaser.Math.Vector2();
   private marker: Phaser.GameObjects.Image;
+  private kiosk: Phaser.GameObjects.Image;
   private cooldown = 3000;
   private pulse = 0;
   /** Jobs lapse if they are abandoned, so the marker never sits there forever. */
@@ -37,6 +38,9 @@ export class Jobs {
 
   constructor(scene: Phaser.Scene, private world: World, private score: ScoreSystem) {
     this.marker = scene.add.image(0, 0, 'marker').setDepth(7).setVisible(false).setAlpha(0.9);
+    // A dispatch terminal stands at the pickup so jobs have a place, not just
+    // a ring on the road.
+    this.kiosk = scene.add.image(0, 0, 'kiosk').setDepth(9).setVisible(false);
   }
 
   /** What is worth restoring after a reload: the objective, not the timer. */
@@ -51,6 +55,7 @@ export class Jobs {
     this.from.set(job.fx, job.fy);
     this.label = job.state === 'offered' ? 'PICK UP' : 'DELIVER';
     this.marker.setVisible(true).setPosition(job.tx, job.ty);
+    this.kiosk.setVisible(job.state === 'offered').setPosition(job.tx, job.ty - 6);
     this.expiry = EXPIRY_MS;
   }
 
@@ -92,6 +97,7 @@ export class Jobs {
     this.state = 'offered';
     this.label = 'PICK UP';
     this.marker.setVisible(true).setPosition(spot.x, spot.y);
+    this.kiosk.setVisible(true).setPosition(spot.x, spot.y - 6);
     this.expiry = EXPIRY_MS;
     track('mission_started', { kind: 'delivery' });
     this.onOffered?.();
@@ -105,6 +111,7 @@ export class Jobs {
     this.state = 'carrying';
     this.label = 'DELIVER';
     this.marker.setPosition(spot.x, spot.y);
+    this.kiosk.setVisible(false);
     this.expiry = EXPIRY_MS;
     this.onPickedUp?.();
   }
@@ -117,6 +124,7 @@ export class Jobs {
     this.label = '';
     this.cooldown = 6000;
     this.marker.setVisible(false);
+    this.kiosk.setVisible(false);
     track('mission_completed', { points, kind: 'delivery' });
     this.onCompleted?.(points);
   }
@@ -134,6 +142,7 @@ export class Jobs {
     this.label = '';
     this.cooldown = 8000;
     this.marker.setVisible(false);
+    this.kiosk.setVisible(false);
     track('mission_failed', { kind: 'delivery', stage });
     this.onFailed?.();
   }

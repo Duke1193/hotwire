@@ -1,6 +1,6 @@
 # IP / provenance audit — GETAWAY
 
-Last reviewed: 2026-09-06 (re-run after the combat/crew pass) · Reviewed at commit: see `git log` for this file.
+Last reviewed: 2026-09-06 (re-run after the art-direction pass) · Reviewed at commit: see `git log` for this file.
 
 This document records where everything in this repository came from, so the
 project's independence can be checked rather than assumed. It is an
@@ -61,7 +61,28 @@ Every sprite is a runtime drawing: `car-coupe`, `car-sedan`, `car-hatch`,
 `tree`, `planter`, `lamp`, `marker`, `chev`, `wedge`, `puff`, `spark`, `skid`,
 `bullet`, `crate`, `beacon`, `stick-base`, `stick-knob`, `shadow-soft`, `px`.
 
-Added in the combat/crew pass, all drawn with the same Graphics primitives:
+Added in the art-direction pass, all drawn with the same Graphics primitives
+and baked into the two existing render textures:
+
+| Element | Our design |
+| --- | --- |
+| Districts | Four quarters of the same generated grid — WAREHOUSE ROW, NIGHT MARKET, RIVERSIDE, OLD BLOCKS — differing only in palette, street furniture, greenery and frontage type. No district reproduces a real or fictional place from another game, and the boundaries fall on our own generated roads. |
+| Landmarks | Six invented names (EASTSIDE DEPOT, CITY MOTORS, NIGHT MARKET, RIVER GARAGE, CENTRAL PARKING, OLD MILL) painted on our own roofs in the system monospace font. No real business, brand or trademark. |
+| Signage | Shop frontages are a coloured awning bar over a lit glass strip; industrial frontages are a shuttered bay with a painted stripe. Abstract shapes, no logos, no lettering except the landmark names. |
+| Street furniture | Dumpster, pallet stack, striped barrier, utility box, bench, market stall — each a handful of rectangles drawn by us. |
+| Road surface | Resurfacing patches, cracks, drain covers, oil marks and stop bars, generated from our own seeded noise. |
+| Vehicle silhouettes | Seven proportion sets (compact, sedan, sport, van, delivery, heavy, patrol, interceptor) built from the same rounded-rectangle body with different cabin position, length, width, roundness and trim. No vehicle is modelled on a real or fictional car. |
+| Vehicle damage | A darkening tint plus existing smoke and spark emitters across four states. No explosions, no detachable panels, no wreck sprite. |
+| Interceptor | The same patrol shape, longer and darker, with a push bar and a full-width light bar. A generic emergency treatment, not any force's markings. |
+| Roadblock | Two existing patrol cars parked across a street. No barricade art, no new unit type. |
+| Weapon sprites | Three tiny blocky silhouettes, around 20px, plus one muzzle flash each. Deliberately abstract; not modelled on any real firearm and not copied from any game. |
+| Pickup crates | A grounded crate with a category mark on the lid — bars, blocks, a plus, a shield. Nothing rotates or floats. |
+| Job kiosk | A street terminal with a lit screen, invented for this game. Not a phone. |
+| HUD | Dark plates with a coloured left edge, a segmented HEAT meter, and bar-style health and armour. No hearts, no stars, no faction meters, no money line. |
+| Vignette | A soft corner darkening drawn once and stretched. No scanlines, no VHS, no chromatic aberration, no fake low-resolution filter. |
+| Audio | Per-weapon reports, a two-note district sting, and down/wrecked/pickup motifs — all synthesised, as before. |
+
+Added in the earlier combat/crew pass:
 
 | Element | Our design |
 | --- | --- |

@@ -23,6 +23,8 @@ const enum State {
   Cross,
   Flee,
   Stumble,
+  /** The beat between noticing and running. */
+  Startled,
 }
 
 interface Ped {
@@ -37,6 +39,8 @@ interface Ped {
   speed: number;
   kx: number;
   ky: number;
+  /** How long the run lasts once the flinch is over. */
+  fleeMs: number;
   /** Frames skipped while far away, so movement stays consistent. */
   slow: boolean;
 }
@@ -80,6 +84,7 @@ export class Pedestrians {
         speed: PEDS.speed * Phaser.Math.FloatBetween(0.82, 1.2),
         kx: 0,
         ky: 0,
+        fleeMs: 2000,
         slow: false,
       });
       this.retarget(this.peds[this.peds.length - 1]);
@@ -145,6 +150,14 @@ export class Pedestrians {
         }
         break;
       }
+      case State.Startled: {
+        // stop dead, flinch, then bolt — the flinch is what reads
+        if (ped.timer <= 0) {
+          ped.state = State.Flee;
+          ped.timer = ped.fleeMs;
+        }
+        break;
+      }
       case State.Wait:
         if (ped.timer <= 0) ped.state = State.Walk;
         break;
@@ -158,7 +171,12 @@ export class Pedestrians {
         break;
     }
 
-    if (ped.state === State.Wait || ped.state === State.KerbWait || ped.state === State.Stumble) {
+    if (
+      ped.state === State.Wait ||
+      ped.state === State.KerbWait ||
+      ped.state === State.Stumble ||
+      ped.state === State.Startled
+    ) {
       this.draw(ped, 0);
       return;
     }
@@ -192,10 +210,24 @@ export class Pedestrians {
     this.draw(ped, move);
   }
 
+  /**
+   * One glance should say what someone is doing: strolling, hurrying across,
+   * frozen mid-flinch or running for their life. Speed does most of the work;
+   * the gait and a startle pop do the rest.
+   */
   private draw(ped: Ped, moved: number) {
-    ped.bob += moved * 0.22;
-    const s = 1 + Math.sin(ped.bob) * 0.07;
-    ped.sprite.setRotation(ped.facing).setScale(SCALE * s, SCALE / s);
+    const running = ped.state === State.Flee;
+    ped.bob += moved * (running ? 0.4 : ped.state === State.Cross ? 0.3 : 0.22);
+
+    let stretch = 1 + Math.sin(ped.bob) * (running ? 0.14 : 0.07);
+    if (ped.state === State.Startled) {
+      // a short, sharp flinch out of the walk cycle
+      const pop = 1 + Math.max(0, ped.timer / 240) * 0.22;
+      stretch = pop;
+    }
+
+    ped.sprite.setRotation(ped.facing).setScale(SCALE * stretch, SCALE / stretch);
+    ped.sprite.setAlpha(running ? 1 : 0.96);
     ped.shadow.setPosition(ped.sprite.x + 3, ped.sprite.y + 5).setRotation(ped.facing);
   }
 
@@ -283,12 +315,22 @@ export class Pedestrians {
   }
 
   private panic(ped: Ped, fromX: number, fromY: number, ms: number) {
-    if (ped.state === State.Stumble) return;
+    if (ped.state === State.Stumble || ped.state === State.Startled) return;
     const first = ped.state !== State.Flee;
-    ped.state = State.Flee;
-    ped.timer = Math.max(ped.timer, ms);
+    ped.fleeMs = Math.max(ped.timer, ms);
+
+    if (first) {
+      // notice first, run second
+      ped.state = State.Startled;
+      ped.timer = 240;
+      ped.facing = Math.atan2(ped.sprite.y - fromY, ped.sprite.x - fromX) + Math.PI;
+    } else {
+      ped.state = State.Flee;
+      ped.timer = ped.fleeMs;
+    }
+
     this.retarget(ped, fromX, fromY);
-    if (first && Math.random() < 0.25) this.onShout?.(ped.sprite.x, ped.sprite.y);
+    if (first && Math.random() < 0.3) this.onShout?.(ped.sprite.x, ped.sprite.y);
   }
 
   /** Aim at a neighbouring waypoint, preferring one away from the threat. */

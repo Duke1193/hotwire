@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { ESCALATION, HEAT, POLICE } from '../config';
 import { Vehicle } from '../entities/Vehicle';
-import { POLICE_SKIN } from '../gfx/Textures';
+import { INTERCEPTOR_SKIN, POLICE_SKIN } from '../gfx/Textures';
 import { World } from '../world/World';
 import { HeatSystem } from './HeatSystem';
 import { AIDriver } from './VehicleController';
@@ -12,6 +12,8 @@ interface Patrol {
   lightA: Phaser.GameObjects.Image;
   lightB: Phaser.GameObjects.Image;
   blink: number;
+  /** While positive this unit sits still as part of a block. */
+  blockMs: number;
 }
 
 /** Spawns and drives pursuit cars according to the current HEAT level. */
@@ -21,6 +23,7 @@ export class PoliceSystem {
 
   private spawnCooldown = 0;
   private standDownMs = 0;
+  private blockCooldown = ESCALATION.roadblockCooldownMs;
   /** 0-3, mirroring the HEAT level the player can see. */
   private escalation = 0;
   private target = new Phaser.Math.Vector2();
@@ -63,6 +66,8 @@ export class PoliceSystem {
     const standDown = this.heat.value <= 0;
     this.standDownMs = standDown ? this.standDownMs + dtMs : 0;
 
+    if (!standDown) this.tryRoadblock(dtMs, playerPos, playerVel);
+
     // aim slightly ahead of where the player is going
     this.target.set(playerPos.x + playerVel.x * 16, playerPos.y + playerVel.y * 16);
 
@@ -73,7 +78,11 @@ export class PoliceSystem {
       const dist = Phaser.Math.Distance.Between(v.x, v.y, playerPos.x, playerPos.y);
       this.nearestDist = Math.min(this.nearestDist, dist);
 
-      if (standDown) {
+      if (p.blockMs > 0) {
+        // parked across the road: lights on, engine idling, going nowhere
+        p.blockMs -= dtMs;
+        v.controls = { throttle: 0, brake: 1, steer: 0, handbrake: true };
+      } else if (standDown) {
         // head away from the player rather than orbiting them forever
         this.away.set(v.x + (v.x - playerPos.x) * 3, v.y + (v.y - playerPos.y) * 3);
         v.controls = p.driver.control(v, this.away, dtMs);
@@ -97,6 +106,29 @@ export class PoliceSystem {
     }
   }
 
+  /**
+   * At the top of the scale, two units park across a street ahead of the
+   * player. It reuses the patrol we already know how to spawn — the only new
+   * behaviour is standing still.
+   */
+  private tryRoadblock(dtMs: number, playerPos: Phaser.Math.Vector2, playerVel: Phaser.Math.Vector2) {
+    this.blockCooldown -= dtMs;
+    if (this.escalation < ESCALATION.roadblockLevel || this.blockCooldown > 0) return;
+    if (playerVel.lengthSq() < 4) return;
+
+    const ahead = new Phaser.Math.Vector2(playerPos.x + playerVel.x * 90, playerPos.y + playerVel.y * 90);
+    const spot = this.world.pickRoadPoint(ahead, 0, 320);
+    if (!spot) return;
+
+    this.blockCooldown = ESCALATION.roadblockCooldownMs;
+    const across = Math.atan2(playerVel.y, playerVel.x) + Math.PI / 2;
+    for (let i = 0; i < 2; i++) {
+      this.spawnAt(spot.x + Math.cos(across) * (i ? 34 : -34), spot.y + Math.sin(across) * (i ? 34 : -34), across);
+      const patrol = this.patrols[this.patrols.length - 1];
+      if (patrol) patrol.blockMs = 17000;
+    }
+  }
+
   /** Called when the chase ends abruptly — an arrest, or a reset. */
   standDown() {
     for (let i = this.patrols.length - 1; i >= 0; i--) this.remove(i);
@@ -110,9 +142,14 @@ export class PoliceSystem {
       this.world.pickRoadPoint(playerPos, POLICE.spawnMinDist, POLICE.spawnMaxDist) ??
       this.world.pickRoadPoint(playerPos, 600, 2600);
     if (!spot) return;
+    this.spawnAt(spot.x, spot.y, Math.atan2(playerPos.y - spot.y, playerPos.x - spot.x));
+  }
 
-    const angle = Math.atan2(playerPos.y - spot.y, playerPos.x - spot.x);
-    const v = new Vehicle(this.scene, spot.x, spot.y, angle, POLICE_SKIN, true);
+  private spawnAt(x: number, y: number, angle: number) {
+    const spot = { x, y };
+    // Serious heat sends a heavier, darker unit with a push bar.
+    const skin = this.escalation >= 3 || (this.escalation === 2 && Math.random() < 0.5) ? INTERCEPTOR_SKIN : POLICE_SKIN;
+    const v = new Vehicle(this.scene, spot.x, spot.y, angle, skin, true);
     v.tuning = {
       maxSpeed: POLICE.maxSpeed * ESCALATION.speed[this.escalation],
       accel: POLICE.accel,
@@ -139,6 +176,7 @@ export class PoliceSystem {
       lightA,
       lightB,
       blink: Math.random() * 400,
+      blockMs: 0,
     });
   }
 

@@ -43,6 +43,11 @@ export class Vehicle {
   /** Set on destroy so any list still holding this car can skip it. */
   dead = false;
 
+  /** 1 = straight off the forecourt, 0 = scrap. */
+  integrity = 1;
+  /** Once wrecked the engine is gone; the shell just rolls to a stop. */
+  wrecked = false;
+
   private stuckMs = 0;
   private lastX = 0;
   private lastY = 0;
@@ -50,12 +55,18 @@ export class Vehicle {
   constructor(scene: Phaser.Scene, x: number, y: number, angle: number, skin: CarSkin, isPolice = false) {
     this.skin = skin;
     this.isPolice = isPolice;
-    this.tuning = { maxSpeed: DRIVE.maxSpeed, accel: DRIVE.accel, grip: DRIVE.grip };
+    // Class character on top of the shared arcade model: a van is never going
+    // to feel like the sports car, but neither of them changes how driving works.
+    this.tuning = {
+      maxSpeed: DRIVE.maxSpeed * skin.speed,
+      accel: DRIVE.accel * skin.accel,
+      grip: clamp(1 - (1 - DRIVE.grip) * skin.grip, 0.55, 0.96),
+    };
 
     this.shadow = scene.add
       .image(x + 6, y + 8, skin.key)
       .setTint(0x000000)
-      .setAlpha(0.32)
+      .setAlpha(0.42)
       .setDepth(6);
 
     this.sprite = scene.matter.add.sprite(x, y, skin.key, undefined, {
@@ -90,6 +101,32 @@ export class Vehicle {
     const v = this.sprite.body as MatterJS.BodyType;
     return Math.hypot(v.velocity.x, v.velocity.y);
   }
+  /** Four readable states, driven by one number. */
+  get condition(): 'healthy' | 'damaged' | 'critical' | 'wrecked' {
+    if (this.wrecked) return 'wrecked';
+    if (this.integrity > 0.66) return 'healthy';
+    if (this.integrity > 0.33) return 'damaged';
+    return 'critical';
+  }
+
+  /**
+   * Takes a knock. Heavier shells shrug more of it off; the shell darkens and
+   * loses its shine as it goes, so damage is visible before it is fatal.
+   */
+  damage(magnitude: number): 'damaged' | 'critical' | 'wrecked' | null {
+    if (this.wrecked || magnitude < 2.2) return null;
+    const before = this.condition;
+    this.integrity = clamp(this.integrity - ((magnitude - 2.2) * 0.028) / this.skin.durability, 0, 1);
+    if (this.integrity <= 0) this.wrecked = true;
+
+    const shade = 0.55 + this.integrity * 0.45;
+    const tint = Phaser.Display.Color.GetColor(255 * shade, 255 * shade, 255 * shade);
+    this.sprite.setTint(tint);
+
+    const after = this.condition;
+    return after !== before && after !== 'healthy' ? after : null;
+  }
+
   get slipping() {
     return Math.abs(this.lateralSpeed) > DRIVE.slipThreshold && Math.abs(this.forwardSpeed) > 1.4;
   }
@@ -121,7 +158,11 @@ export class Vehicle {
     const c = this.controls;
     const max = this.tuning.maxSpeed;
 
-    if (c.throttle > 0) {
+    if (this.wrecked) {
+      // engine gone: coast, steer loosely, no drive
+      c.throttle = 0;
+      fwd *= decay(0.972, dtScale);
+    } else if (c.throttle > 0) {
       const boost = fwd < 0 ? 2.1 : 1; // snappy change of direction
       fwd += this.tuning.accel * c.throttle * boost * dtScale;
     }

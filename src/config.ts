@@ -5,6 +5,8 @@ export const WORLD = {
   height: 2300,
   roadHalfWidth: 92,
   sidewalk: 26,
+  /** Spacing of kerbside street furniture; phones get a sparser street. */
+  propStep: 108,
   seed: 'getaway-01',
   /** Road centre lines. */
   roadsX: [400, 1250, 2100, 2900],
@@ -66,21 +68,102 @@ export const CAM = {
   lerp: 0.09,
   leadFoot: 6,
   leadCar: 26,
-  zoomFoot: 1.42,
-  zoomCar: 1.3,
-  zoomFast: 1.0,
+  zoomFoot: 1.72,
+  zoomCar: 1.52,
+  zoomFast: 1.2,
 };
 
 export const COLORS = {
-  asphalt: 0x41454f,
-  asphaltEdge: 0x33363e,
-  line: 0xf2ead0,
-  lineDim: 0xa8a48f,
-  sidewalk: 0x8a8e99,
-  sidewalkEdge: 0x9aa0ab,
-  lot: 0x6a6e79,
-  grass: 0x4e7f57,
+  /** Roads sit clearly below the pavement in value: kerbs should read at a glance. */
+  asphalt: 0x33363d,
+  asphaltEdge: 0x272a30,
+  line: 0xf6efd6,
+  lineDim: 0x9d9a86,
+  sidewalk: 0x9aa1ae,
+  sidewalkEdge: 0xb4bbc7,
+  lot: 0x5d616b,
+  grass: 0x4b7c54,
+  /** Painted hazard/■kerb accents used sparingly around the city. */
+  hazard: 0xd8a83c,
 };
+
+export interface District {
+  name: string;
+  /** Building wall/roof/detail tones, sampled per building. */
+  walls: number[];
+  roofs: number[];
+  details: number[];
+  pavement: number;
+  lot: number;
+  /** 0-1 chance a block interior becomes greenery. */
+  green: number;
+  /** 0-1 chance a kerbside prop slot gets industrial furniture. */
+  industrial: number;
+  /** Accent used for painted markings and signage in this district. */
+  accent: number;
+}
+
+/**
+ * Four quarters of one city. Same generator, different materials — the point
+ * is that a screenshot from each is instantly identifiable without changing
+ * how anything is built or rendered.
+ */
+export const DISTRICTS: District[] = [
+  {
+    name: 'WAREHOUSE ROW',
+    walls: [0x3c4048, 0x474b52, 0x4e463c, 0x3a4147],
+    roofs: [0x767d86, 0x8a8f95, 0x94836a, 0x6f7a83],
+    details: [0xa9b0b8, 0xbfc4c9, 0xc0a883],
+    pavement: 0x8d939e,
+    lot: 0x54585f,
+    green: 0.04,
+    industrial: 0.72,
+    accent: 0xd8a83c,
+  },
+  {
+    name: 'NIGHT MARKET',
+    walls: [0x5e3f3a, 0x6a4a35, 0x54383f, 0x5c4a2e],
+    roofs: [0xb07a63, 0xc08d5c, 0xa06b74, 0xb59a5a],
+    details: [0xe0b48a, 0xf0cf94, 0xd79a9a],
+    pavement: 0xa79a91,
+    lot: 0x6b544a,
+    green: 0.1,
+    industrial: 0.22,
+    accent: 0xff9d4d,
+  },
+  {
+    name: 'RIVERSIDE',
+    walls: [0x35505a, 0x3d5a5f, 0x2f4a58, 0x44605c],
+    roofs: [0x6d95a0, 0x7aa5a6, 0x63899d, 0x86a89f],
+    details: [0x9fc4cb, 0xb2d4d0, 0x8fb6c6],
+    pavement: 0x9daab0,
+    lot: 0x4f6a70,
+    green: 0.42,
+    industrial: 0.12,
+    accent: 0x5ad1c4,
+  },
+  {
+    name: 'OLD BLOCKS',
+    walls: [0x5a4038, 0x4d3a35, 0x63483c, 0x46352f],
+    roofs: [0x9c7161, 0x8d6a5e, 0xa87c64, 0x7f6154],
+    details: [0xc79a80, 0xd8ae90, 0xb08a74],
+    pavement: 0x9b958c,
+    lot: 0x5f4f45,
+    green: 0.16,
+    industrial: 0.3,
+    accent: 0xffb347,
+  },
+];
+
+/** Fictional places, used for signage and for saying "meet me at the depot". */
+export const LANDMARKS = [
+  { name: 'EASTSIDE DEPOT', district: 0 },
+  { name: 'CITY MOTORS', district: 0 },
+  { name: 'NIGHT MARKET', district: 1 },
+  { name: 'RIVER GARAGE', district: 2 },
+  { name: 'CENTRAL PARKING', district: 3 },
+  { name: 'OLD MILL', district: 3 },
+];
 
 export const TRAFFIC = {
   /** Cars kept alive around the player. */

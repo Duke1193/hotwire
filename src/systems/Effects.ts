@@ -72,6 +72,12 @@ export class Effects {
     cam.shake(Phaser.Math.Clamp(magnitude * 22, 90, 320), strength);
   }
 
+  /** A car that is failing: smoke from under the bonnet. */
+  damageSmoke(x: number, y: number, critical: boolean) {
+    this.smoke.emitParticleAt(x, y, critical ? 2 : 1);
+    if (critical && Math.random() < 0.3) this.sparks.emitParticleAt(x, y, 2);
+  }
+
   /** Cheap off-screen-ish hit: a few sparks, no shake. */
   bump(x: number, y: number, count = 4) {
     this.sparks.emitParticleAt(x, y, isMobile ? 2 : count);

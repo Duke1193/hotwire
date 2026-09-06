@@ -23,6 +23,15 @@ const KIND_TINT: Record<PickupKind, number> = {
   armor: 0x9fb6ff,
 };
 
+/** The lid marking says what is inside before you are close enough to read. */
+const KIND_TEXTURE: Record<PickupKind, string> = {
+  pistol: 'crate-weapon',
+  auto: 'crate-ammo',
+  shotgun: 'crate-weapon',
+  health: 'crate-health',
+  armor: 'crate-armor',
+};
+
 /**
  * Supply crates tucked into the parts of the city you would otherwise never
  * drive through — courtyards, car parks, alleys behind blocks. Original
@@ -48,7 +57,7 @@ export class Pickups {
         .setBlendMode(Phaser.BlendModes.ADD)
         .setAlpha(0.45)
         .setDepth(6);
-      const crate = scene.add.image(spot.x, spot.y, 'crate').setTint(KIND_TINT[kind]).setDepth(9);
+      const crate = scene.add.image(spot.x, spot.y, KIND_TEXTURE[kind]).setTint(KIND_TINT[kind]).setDepth(9);
       this.crates.push({ kind, x: spot.x, y: spot.y, crate, glow, cooldown: 0 });
     }
   }
