@@ -9,6 +9,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Getaway" />
     <title>GETAWAY — steal a car. lose the cops. bring a friend.</title>
     <meta
       name="description"
@@ -16,6 +17,8 @@
     />
     <meta name="theme-color" content="#0b0d12" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="GETAWAY" />
@@ -50,14 +53,17 @@
         -webkit-touch-callout: none;
         -webkit-tap-highlight-color: transparent;
       }
-      /* Fixed + dvh keeps Safari's collapsing address bar from resizing play. */
+      /*
+       * --gw-vw / --gw-vh are written from visualViewport on every reflow, so
+       * the canvas and the DOM overlay always occupy exactly the area Safari
+       * is actually showing. dvh is the fallback before the first measurement.
+       */
       #game {
         position: fixed;
         top: 0;
         left: 0;
-        width: 100vw;
-        height: 100vh;
-        height: 100dvh;
+        width: var(--gw-vw, 100vw);
+        height: var(--gw-vh, 100dvh);
         touch-action: none;
       }
       canvas { display: block; touch-action: none; }

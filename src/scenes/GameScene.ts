@@ -279,7 +279,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.remotes = new RemotePlayers(this, session.net);
-    this.heatRun = new HeatRun(session.net, session.identity.nickname, session.identity.id);
+    this.heatRun = new HeatRun(session.net, session.identity.name, session.identity.id);
     this.crewWar = new CrewWar(session.net);
     this.crew = session.crew;
     this.wireCombat(session);
@@ -296,12 +296,11 @@ export class GameScene extends Phaser.Scene {
     session.net.onPeerJoin = (peer) => {
       // The moment a room stops being empty is the one worth noticing.
       const crew = peer.crewName ? `[${peer.crewTag}] ${peer.crewName}` : '';
-      const sub = [peer.handle ? `@${peer.handle}` : '', crew].filter(Boolean).join('   ');
-      session.overlay.toast(`${peer.nickname.toUpperCase()} JOINED`, 3600, sub);
+      session.overlay.toast(`${peer.nickname} JOINED`, 3600, crew);
       session.audio.cue('playerJoined');
-      if (session.net.peers.size === 1) this.objectives.announce('PLAYER JOINED', peer.nickname.toUpperCase());
+      if (session.net.peers.size === 1) this.objectives.announce('PLAYER JOINED', peer.nickname);
     };
-    session.net.onPeerLeave = (peer) => session.overlay.toast(`${peer.nickname.toUpperCase()} LEFT`, 2200);
+    session.net.onPeerLeave = (peer) => session.overlay.toast(`${peer.nickname} LEFT`, 2200);
     session.overlay.onHeatRun = () => this.heatRun?.start();
     session.overlay.onCrewWar = () => this.crewWar?.start();
     session.overlay.onScoreboardOpen = () => track('scoreboard_opened');
@@ -386,14 +385,14 @@ export class GameScene extends Phaser.Scene {
     if (!session) return;
     const killerId = (payload as { killer?: string | null })?.killer ?? null;
     const victim = session.net.peers.get(from);
-    const victimName = `${victim?.crewTag ? `[${victim.crewTag}] ` : ''}${(victim?.nickname ?? 'PLAYER').toUpperCase()}`;
+    const victimName = `${victim?.crewTag ? `[${victim.crewTag}] ` : ''}${victim?.nickname ?? 'PLAYER'}`;
 
     if (killerId === session.identity.id) {
       this.stats.kills++;
       session.net.meta.kills = this.stats.kills;
       this.score.add(SCORE.eliminate, 'ELIMINATION');
       this.crewWar?.award(this.crew?.tag, this.crew?.name, CREW_WAR.killPoints, 'kill');
-      const me = `${this.crew ? `[${this.crew.tag}] ` : ''}${session.identity.nickname.toUpperCase()}`;
+      const me = `${this.crew ? `[${this.crew.tag}] ` : ''}${session.identity.name}`;
       session.overlay.killFeed(`${me} → ${victimName}`);
       track('player_killed');
       this.saver?.mark();
@@ -402,9 +401,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     const killer = killerId ? session.net.peers.get(killerId) : null;
-    const killerName = killer
-      ? `${killer.crewTag ? `[${killer.crewTag}] ` : ''}${killer.nickname.toUpperCase()}`
-      : 'THE CITY';
+    const killerName = killer ? `${killer.crewTag ? `[${killer.crewTag}] ` : ''}${killer.nickname}` : 'THE CITY';
     session.overlay.killFeed(`${killerName} → ${victimName}`);
   }
 
@@ -424,17 +421,9 @@ export class GameScene extends Phaser.Scene {
     const session = this.session;
     if (!session) return;
     if (!this.localLabel) {
-      this.localLabel = new PlayerLabel(this, {
-        nickname: session.identity.nickname,
-        handle: session.identity.handle,
-        crewTag: this.crew?.tag,
-      });
+      this.localLabel = new PlayerLabel(this, { name: session.identity.name, crewTag: this.crew?.tag });
     }
-    this.localLabel.setIdentity({
-      nickname: session.identity.nickname,
-      handle: session.identity.handle,
-      crewTag: this.crew?.tag,
-    });
+    this.localLabel.setIdentity({ name: session.identity.name, crewTag: this.crew?.tag });
     this.localLabelMs = ms;
   }
 
@@ -479,10 +468,9 @@ export class GameScene extends Phaser.Scene {
       version: SAVE_VERSION,
       timestamp: Date.now(),
       playerId: session.identity.id,
-      nickname: session.identity.nickname,
+      nickname: session.identity.name,
       onboarded: !this.onboarding.active,
       muted: session.audio.muted,
-      handle: session.identity.handle,
       crewTag: this.crew?.tag,
       crewName: this.crew?.name,
       stats: this.stats,
@@ -502,8 +490,7 @@ export class GameScene extends Phaser.Scene {
     if (!session) return;
     const players = [
       {
-        name: session.identity.nickname,
-        handle: session.identity.handle,
+        name: session.identity.name,
         crewTag: this.crew?.tag,
         score: this.score.value,
         kills: this.stats.kills,
@@ -511,7 +498,6 @@ export class GameScene extends Phaser.Scene {
       },
       ...[...session.net.peers.values()].map((p) => ({
         name: p.nickname,
-        handle: p.handle,
         crewTag: p.crewTag,
         score: p.score,
         kills: p.kills,
@@ -526,7 +512,7 @@ export class GameScene extends Phaser.Scene {
 
     session.overlay.setRoster(players, crews);
     session.overlay.setRoom(session.room.code, session.net.onlineCount, session.net.status);
-    session.overlay.setPlayerInfo(session.identity.nickname, session.identity.handle, this.crew);
+    session.overlay.setPlayerInfo(session.identity.name, this.crew);
   }
 
   private crewTotals(players: { crewTag?: string; score: number }[]) {

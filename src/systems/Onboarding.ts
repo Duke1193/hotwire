@@ -27,7 +27,7 @@ const COPY: Record<'keys' | 'touch', Record<Step, string>> = {
     finished: '',
   },
   touch: {
-    move: 'MOVE  ·  DRAG ANYWHERE LEFT',
+    move: 'MOVE  ·  DRAG TO WALK',
     ride: 'FIND A RIDE',
     enter: 'TAP  ENTER',
     drive: 'HOLD  GO',

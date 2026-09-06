@@ -4,14 +4,14 @@ import { inviteUrl, resolveRoom, RoomInfo } from './net/Room';
 import { Analytics, track } from './systems/Analytics';
 import { AudioBus } from './systems/Audio';
 import { Crew, crewFromUrl, loadCrew, makeCrew, saveCrew } from './systems/Crew';
-import { Identity, loadIdentity, sanitizeHandle, sanitizeNickname, saveIdentity } from './systems/Identity';
+import { Identity, loadIdentity, sanitizeName, saveIdentity } from './systems/Identity';
 import { clearSave, readBest, readSave, SaveState } from './systems/SaveGame';
 import { getOverlay, initOverlay, Overlay } from './ui/Overlay';
 
 export interface Session {
   identity: Identity;
   crew: Crew | null;
-  /** Fired when the nickname, handle or crew changes at runtime. */
+  /** Fired when the name or crew changes at runtime. */
   onProfileChange: (() => void) | null;
   room: RoomInfo;
   audio: AudioBus;
@@ -36,7 +36,7 @@ export function onSession(cb: (s: Session) => void) {
 }
 
 /**
- * Resolves the room from the URL, asks first-time players for a nickname, and
+ * Resolves the room from the URL, asks first-time players for a name, and
  * opens the realtime channel. The game itself boots in parallel behind the
  * overlay so the city is already running when the player presses PLAY.
  */
@@ -66,7 +66,7 @@ export function bootSession() {
     // into a run they did not ask to continue.
     const save = readSave(existing.id);
     if (save) {
-      overlay.showResume({ nickname: existing.nickname, score: save.score, best: Math.max(save.best, readBest()) });
+      overlay.showResume({ name: existing.name, score: save.score, best: Math.max(save.best, readBest()) });
       overlay.onContinue = () => {
         audio.start();
         finish(existing, room, audio, overlay, true, save);
@@ -84,37 +84,32 @@ export function bootSession() {
   }
 
   overlay.showBoot(room, '');
-  overlay.onPlay = (rawNick, rawHandle) => {
-    const check = sanitizeNickname(rawNick);
+  overlay.onPlay = (raw) => {
+    const check = sanitizeName(raw);
     if (!check.ok) {
-      overlay.rejectNickname(check.error ?? 'TRY ANOTHER NAME');
+      overlay.rejectName(check.error ?? 'TRY ANOTHER NAME');
       return;
     }
-    const handle = sanitizeHandle(rawHandle);
-    if (!handle.ok) {
-      overlay.rejectNickname(handle.error ?? 'CHECK THE HANDLE');
-      return;
-    }
-    const identity = saveIdentity(check.value, null, handle.value);
-    track('nickname_created', { has_handle: Boolean(handle.value) });
+    const identity = saveIdentity(check.value, null);
+    // Whether they chose a handle is interesting; the value itself is not sent.
+    track('nickname_created', { is_handle: check.value.startsWith('@') });
     audio.start();
     overlay.hideBoot();
     finish(identity, room, audio, overlay, false, null);
   };
 }
 
-/** Nickname, handle and crew edits from the settings panel. */
+/** Name and crew edits from the settings panel. */
 function wireProfile(session: Session, overlay: Overlay) {
-  overlay.onIdentityChange = (rawNick, rawHandle) => {
-    const nick = sanitizeNickname(rawNick);
-    const handle = sanitizeHandle(rawHandle);
-    if (!nick.ok || !handle.ok) {
-      overlay.toast(nick.error ?? handle.error ?? 'CHECK THOSE DETAILS');
+  overlay.onIdentityChange = (raw) => {
+    const checked = sanitizeName(raw);
+    if (!checked.ok) {
+      overlay.toast(checked.error ?? 'CHECK THAT NAME');
       return;
     }
-    session.identity = saveIdentity(nick.value, session.identity, handle.value);
+    session.identity = saveIdentity(checked.value, session.identity);
     session.net.setIdentity(session.identity);
-    overlay.setPlayerInfo(session.identity.nickname, session.identity.handle, session.crew);
+    overlay.setPlayerInfo(session.identity.name, session.crew);
     overlay.toast('PROFILE SAVED');
     session.onProfileChange?.();
   };
@@ -131,7 +126,7 @@ function wireProfile(session: Session, overlay: Overlay) {
     session.crew = crew;
     session.net.meta.crewTag = crew.tag;
     session.net.meta.crewName = crew.name;
-    overlay.setPlayerInfo(session.identity.nickname, session.identity.handle, crew);
+    overlay.setPlayerInfo(session.identity.name, crew);
     overlay.toast(`[${crew.tag}] ${crew.name}`);
     track(existing ? 'crew_joined' : 'crew_created', { via: 'settings' });
     session.onProfileChange?.();
@@ -143,7 +138,7 @@ function wireProfile(session: Session, overlay: Overlay) {
     session.crew = null;
     session.net.meta.crewTag = undefined;
     session.net.meta.crewName = undefined;
-    overlay.setPlayerInfo(session.identity.nickname, session.identity.handle, null);
+    overlay.setPlayerInfo(session.identity.name, null);
     overlay.toast('LEFT CREW');
     track('crew_left');
     session.onProfileChange?.();
@@ -227,7 +222,7 @@ function finish(
 
   overlay.onInvite = session.invite;
   overlay.setRoom(room.code, 1, 'offline');
-  overlay.setPlayerInfo(identity.nickname, identity.handle, crew);
+  overlay.setPlayerInfo(identity.name, crew);
 
   Analytics.identify(identity.id);
   Analytics.setContext({ room_id: room.code, nickname_set: true, multiplayer: false, online_player_count: 1 });
@@ -251,7 +246,7 @@ function finish(
 function shareInvite(room: RoomInfo, session: Session, overlay: Overlay, offline: boolean) {
   const crew = session.crew;
   track(crew ? 'crew_invite_clicked' : 'invite_clicked', { offline });
-  const url = inviteUrl(room.code, session.identity.nickname, crew);
+  const url = inviteUrl(room.code, session.identity.name, crew);
 
   const copied = () => {
     track('invite_copied');

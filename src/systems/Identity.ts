@@ -2,9 +2,12 @@ const KEY = 'getaway.identity';
 
 export interface Identity {
   id: string;
-  nickname: string;
-  /** Optional X/Twitter handle, stored without the leading @. */
-  handle?: string;
+  /**
+   * One canonical display name. If it starts with `@` it is an X-style handle
+   * and keeps the `@`; otherwise it is an ordinary nickname. We never infer a
+   * handle from a plain string — `timobuilds_` is just a name.
+   */
+  name: string;
 }
 
 /** Deliberately mild: this only stops the most obvious nonsense. */
@@ -12,60 +15,61 @@ const BLOCKED = ['fuck', 'shit', 'cunt', 'nigg', 'fagg', 'rape', 'nazi', 'hitler
 
 const LEET: Record<string, string> = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', $: 's' };
 
-export function sanitizeNickname(raw: string): { ok: boolean; value: string; error?: string } {
-  const value = raw
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 14)
-    .replace(/[^\p{L}\p{N} _-]/gu, '');
+export const NAME_MAX = 16;
 
-  if (value.length < 2) return { ok: false, value, error: 'AT LEAST 2 CHARACTERS' };
-
+function offensive(value: string): boolean {
   const flat = value
     .toLowerCase()
     .split('')
     .map((c) => LEET[c] ?? c)
     .join('')
     .replace(/[^a-z]/g, '');
-  if (BLOCKED.some((word) => flat.includes(word))) return { ok: false, value, error: 'PICK ANOTHER NAME' };
-
-  return { ok: true, value };
+  return BLOCKED.some((word) => flat.includes(word));
 }
 
 /**
- * X/Twitter handles are optional. We accept a pasted @name, a bare name or a
- * full profile URL, and keep only the handle itself.
+ * One field, two shapes. A leading `@` switches to handle rules (the character
+ * set X allows); anything else is a nickname.
  */
-export function sanitizeHandle(raw: string): { ok: boolean; value?: string; error?: string } {
+export function sanitizeName(raw: string): { ok: boolean; value: string; error?: string } {
   const trimmed = raw.trim();
-  if (!trimmed) return { ok: true, value: undefined };
 
-  const fromUrl = trimmed.match(/(?:twitter|x)\.com\/([^/?#]+)/i);
-  const candidate = (fromUrl ? fromUrl[1] : trimmed).replace(/^@+/, '');
-  const value = candidate.replace(/[^A-Za-z0-9_]/g, '').slice(0, 15);
+  if (trimmed.startsWith('@')) {
+    const handle = trimmed.slice(1).replace(/[^A-Za-z0-9_]/g, '').slice(0, 15);
+    if (handle.length < 2) return { ok: false, value: trimmed, error: 'HANDLE NEEDS 2+ CHARACTERS' };
+    if (offensive(handle)) return { ok: false, value: trimmed, error: 'PICK ANOTHER NAME' };
+    return { ok: true, value: `@${handle}` };
+  }
 
-  if (!value) return { ok: false, error: 'LETTERS, NUMBERS AND _ ONLY' };
-  return { ok: true, value };
+  const name = trimmed
+    .replace(/\s+/g, ' ')
+    .slice(0, NAME_MAX)
+    .replace(/[^\p{L}\p{N} _-]/gu, '');
+  if (name.length < 2) return { ok: false, value: name, error: 'AT LEAST 2 CHARACTERS' };
+  if (offensive(name)) return { ok: false, value: name, error: 'PICK ANOTHER NAME' };
+  return { ok: true, value: name };
 }
 
 export function loadIdentity(): Identity | null {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<Identity>;
-    if (!parsed.id || !parsed.nickname) return null;
-    return {
-      id: parsed.id,
-      nickname: parsed.nickname,
-      handle: typeof parsed.handle === 'string' && parsed.handle ? parsed.handle : undefined,
-    };
+    const parsed = JSON.parse(raw) as { id?: string; name?: string; nickname?: string; handle?: string };
+    if (!parsed.id) return null;
+
+    // Migrate the old two-field record: a handle wins, otherwise the nickname.
+    const name = parsed.name ?? (parsed.handle ? `@${parsed.handle}` : parsed.nickname);
+    if (!name) return null;
+
+    const checked = sanitizeName(name);
+    return { id: parsed.id, name: checked.ok ? checked.value : name.slice(0, NAME_MAX) };
   } catch {
     return null;
   }
 }
 
-export function saveIdentity(nickname: string, existing?: Identity | null, handle?: string): Identity {
-  const identity: Identity = { id: existing?.id ?? newId(), nickname, handle: handle || undefined };
+export function saveIdentity(name: string, existing?: Identity | null): Identity {
+  const identity: Identity = { id: existing?.id ?? newId(), name };
   try {
     localStorage.setItem(KEY, JSON.stringify(identity));
   } catch {

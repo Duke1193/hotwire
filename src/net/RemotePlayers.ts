@@ -54,12 +54,7 @@ export class RemotePlayers {
 
       avatar.body.setPosition(pose.x, pose.y).setRotation(pose.rotation).setAlpha(avatar.down ? 0.3 : 1);
       avatar.ring.setPosition(pose.x, pose.y).setAlpha(avatar.down ? 0.15 : 0.45);
-      avatar.label.setIdentity({
-        nickname: peer.nickname,
-        handle: peer.handle,
-        crewTag: peer.crewTag,
-        accent: accentFor(peer.id),
-      });
+      avatar.label.setIdentity({ name: peer.nickname, crewTag: peer.crewTag, accent: accentFor(peer.id) });
       // Remote labels stay up whether they are walking or driving: recognising
       // who is who is the whole point of playing together.
       avatar.label.update(pose.x, pose.y, pose.inVehicle ? 34 : 28, avatar.down ? 0.35 : 1);
@@ -98,12 +93,7 @@ export class RemotePlayers {
     const avatar: Avatar = {
       ring: this.scene.add.image(0, 0, 'marker').setScale(0.42).setTint(accent).setAlpha(0.45).setDepth(7),
       body: this.scene.add.image(0, 0, key).setDepth(12),
-      label: new PlayerLabel(this.scene, {
-        nickname: peer.nickname,
-        handle: peer.handle,
-        crewTag: peer.crewTag,
-        accent,
-      }),
+      label: new PlayerLabel(this.scene, { name: peer.nickname, crewTag: peer.crewTag, accent }),
       key,
       x: 0,
       y: 0,

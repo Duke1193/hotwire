@@ -117,7 +117,6 @@ export class SupabaseTransport implements Transport {
       peers.push({
         playerId: info.playerId,
         nickname: info.nickname ?? 'PLAYER',
-        handle: info.handle,
         crewTag: info.crewTag,
         crewName: info.crewName,
         score: info.score ?? 0,

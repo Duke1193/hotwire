@@ -1,8 +1,7 @@
 export interface PresenceInfo {
   playerId: string;
+  /** Canonical display name; may start with '@'. */
   nickname: string;
-  /** Optional X handle, without the @. */
-  handle?: string;
   crewTag?: string;
   crewName?: string;
   score: number;

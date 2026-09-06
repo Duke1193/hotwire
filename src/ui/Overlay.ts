@@ -7,7 +7,6 @@ import { hasTouch } from '../util/device';
 
 export interface RosterEntry {
   name: string;
-  handle?: string;
   crewTag?: string;
   score: number;
   kills: number;
@@ -49,7 +48,7 @@ const TOUCH_CONTROLS: [string, string][] = [
  * speed readout and the objective from ever landing on top of each other.
  */
 export class Overlay {
-  onPlay: ((nickname: string, handle: string) => void) | null = null;
+  onPlay: ((name: string) => void) | null = null;
   onContinue: (() => void) | null = null;
   onNewRun: (() => void) | null = null;
   onInvite: (() => void) | null = null;
@@ -57,7 +56,7 @@ export class Overlay {
   onHeatRun: (() => void) | null = null;
   onCrewWar: (() => void) | null = null;
   onAnalyticsChoice: ((enabled: boolean) => void) | null = null;
-  onIdentityChange: ((nickname: string, handle: string) => void) | null = null;
+  onIdentityChange: ((name: string) => void) | null = null;
   onCrewChange: ((name: string, tag: string) => void) | null = null;
   onCrewLeave: (() => void) | null = null;
   onScoreboardOpen: (() => void) | null = null;
@@ -71,8 +70,7 @@ export class Overlay {
   private boot!: HTMLDivElement;
   private bootNew!: HTMLDivElement;
   private bootResume!: HTMLDivElement;
-  private nickInput!: HTMLInputElement;
-  private handleInput!: HTMLInputElement;
+  private nameInput!: HTMLInputElement;
   private error!: HTMLElement;
   private roomChip!: HTMLDivElement;
   private roomLabel!: HTMLElement;
@@ -87,7 +85,6 @@ export class Overlay {
   private toasts!: HTMLDivElement;
   private nudge!: HTMLDivElement;
   private nudgeText!: HTMLElement;
-  private rotate!: HTMLDivElement;
   private settings!: HTMLDivElement;
   private analyticsToggle!: HTMLButtonElement;
   private privacyNote!: HTMLElement;
@@ -95,8 +92,7 @@ export class Overlay {
   private crewState!: HTMLDivElement;
   private crewNameInput!: HTMLInputElement;
   private crewTagInput!: HTMLInputElement;
-  private setNickInput!: HTMLInputElement;
-  private setHandleInput!: HTMLInputElement;
+  private setNameInput!: HTMLInputElement;
   private settingsObjective!: HTMLElement;
   private settingsRoom!: HTMLElement;
 
@@ -150,27 +146,14 @@ export class Overlay {
         <button class="gw-x" id="gw-nudge-close">✕</button>
       </div>
 
-      <div class="gw-rotate gw-hidden" id="gw-rotate">
-        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
-          <rect x="20" y="6" width="24" height="42" rx="4" stroke="#69d8ff" stroke-width="2.5" />
-          <rect x="27" y="10" width="10" height="2" rx="1" fill="#69d8ff" opacity="0.7" />
-          <circle cx="32" cy="43" r="1.8" fill="#69d8ff" opacity="0.7" />
-          <path d="M14 54a22 22 0 0 0 36 0" stroke="#39415a" stroke-width="2" stroke-linecap="round" />
-          <path d="M50 54l-5-4M50 54l-5 4" stroke="#39415a" stroke-width="2" stroke-linecap="round" />
-        </svg>
-        <p>ROTATE TO PLAY</p>
-        <small>GETAWAY RUNS IN LANDSCAPE</small>
-      </div>
-
       <div class="gw-boot gw-hidden" id="gw-boot">
         <div class="gw-boot-inner" id="gw-boot-new">
           <h1>GETAWAY</h1>
           <p class="gw-sub">enter the city.</p>
           <p class="gw-join gw-hidden" id="gw-joining"></p>
-          <label for="gw-nick">NICKNAME</label>
-          <input id="gw-nick" maxlength="14" autocomplete="off" spellcheck="false" />
-          <label for="gw-handle" class="gw-optional">X / TWITTER HANDLE <span>OPTIONAL</span></label>
-          <input id="gw-handle" maxlength="20" autocomplete="off" spellcheck="false" placeholder="@yourhandle" />
+          <label for="gw-name">NICKNAME OR @X HANDLE</label>
+          <input id="gw-name" maxlength="17" autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="Timo or @timobuilds_" />
           <p class="gw-err" id="gw-err"></p>
           <button class="gw-play" id="gw-play">PLAY</button>
           <p class="gw-fine">no account · anonymous analytics · <button class="gw-link" data-privacy>PRIVACY</button></p>
@@ -195,9 +178,8 @@ export class Overlay {
           <section><h3>CONTROLS</h3><div class="gw-keys" id="gw-controls"></div></section>
 
           <section><h3>PLAYER</h3>
-            <div class="gw-field"><label for="gw-set-nick">NICKNAME</label><input id="gw-set-nick" maxlength="14" autocomplete="off" spellcheck="false" /></div>
-            <div class="gw-field"><label for="gw-set-handle">X / TWITTER</label><input id="gw-set-handle" maxlength="20" autocomplete="off" spellcheck="false" placeholder="@yourhandle" /></div>
-            <button class="gw-secondary" id="gw-save-player">SAVE PLAYER</button>
+            <div class="gw-field"><label for="gw-set-name">NAME</label><input id="gw-set-name" maxlength="17" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Timo or @timobuilds_" /></div>
+            <button class="gw-secondary" id="gw-save-player">SAVE NAME</button>
           </section>
 
           <section><h3>CREW</h3>
@@ -216,6 +198,12 @@ export class Overlay {
           </section>
 
           <section><h3>CURRENT OBJECTIVE</h3><p class="gw-state" id="gw-settings-objective">—</p></section>
+
+          <section id="gw-display-section"><h3>DISPLAY</h3>
+            <p class="gw-state" id="gw-display-state">—</p>
+            <button class="gw-secondary" id="gw-fullscreen">PLAY FULLSCREEN</button>
+            <p class="gw-fine" id="gw-display-hint"></p>
+          </section>
 
           <section><h3>AUDIO</h3>
             <div class="gw-toggle-row"><span>SOUND</span><button id="gw-audio-toggle" class="gw-toggle" aria-pressed="true">ON</button></div>
@@ -244,8 +232,7 @@ export class Overlay {
     this.boot = this.q('gw-boot');
     this.bootNew = this.q('gw-boot-new');
     this.bootResume = this.q('gw-boot-resume');
-    this.nickInput = this.q('gw-nick');
-    this.handleInput = this.q('gw-handle');
+    this.nameInput = this.q('gw-name');
     this.error = this.q('gw-err');
     this.roomChip = this.q('gw-room');
     this.roomLabel = this.q('gw-roomcode');
@@ -260,7 +247,6 @@ export class Overlay {
     this.toasts = this.q('gw-toasts');
     this.nudge = this.q('gw-nudge');
     this.nudgeText = this.q('gw-nudge-text');
-    this.rotate = this.q('gw-rotate');
     this.settings = this.q('gw-settings');
     this.analyticsToggle = this.q('gw-analytics-toggle');
     this.privacyNote = this.q('gw-privacy-note');
@@ -268,20 +254,17 @@ export class Overlay {
     this.crewState = this.q('gw-crew-state');
     this.crewNameInput = this.q('gw-crew-name');
     this.crewTagInput = this.q('gw-crew-tag');
-    this.setNickInput = this.q('gw-set-nick');
-    this.setHandleInput = this.q('gw-set-handle');
+    this.setNameInput = this.q('gw-set-name');
     this.settingsObjective = this.q('gw-settings-objective');
     this.settingsRoom = this.q('gw-settings-room');
 
-    const submit = () => this.onPlay?.(this.nickInput.value, this.handleInput.value);
+    const submit = () => this.onPlay?.(this.nameInput.value);
     this.q('gw-play').addEventListener('click', submit);
-    for (const input of [this.nickInput, this.handleInput]) {
-      input.addEventListener('keydown', (e) => {
-        if ((e as KeyboardEvent).key === 'Enter') submit();
-        e.stopPropagation();
-      });
-    }
-    for (const input of [this.setNickInput, this.setHandleInput, this.crewNameInput, this.crewTagInput]) {
+    this.nameInput.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') submit();
+      e.stopPropagation();
+    });
+    for (const input of [this.setNameInput, this.crewNameInput, this.crewTagInput]) {
       input.addEventListener('keydown', (e) => e.stopPropagation());
     }
 
@@ -316,13 +299,13 @@ export class Overlay {
     });
     this.settings.addEventListener('keydown', (e) => e.stopPropagation());
     this.q('gw-settings-close').addEventListener('click', () => this.closeSettings());
-    this.q('gw-save-player').addEventListener('click', () =>
-      this.onIdentityChange?.(this.setNickInput.value, this.setHandleInput.value),
-    );
+    this.q('gw-save-player').addEventListener('click', () => this.onIdentityChange?.(this.setNameInput.value));
     this.q('gw-crew-save').addEventListener('click', () =>
       this.onCrewChange?.(this.crewNameInput.value, this.crewTagInput.value),
     );
     this.q('gw-crew-leave').addEventListener('click', () => this.onCrewLeave?.());
+    this.q('gw-fullscreen').addEventListener('click', () => this.goFullscreen());
+    this.refreshDisplay();
 
     (this.root.querySelectorAll('[data-privacy]') as NodeListOf<HTMLElement>).forEach((link) =>
       link.addEventListener('click', () => this.openSettings('gw-privacy-section')),
@@ -332,7 +315,6 @@ export class Overlay {
       this.onAnalyticsChoice?.(next);
     });
 
-    this.watchOrientation();
   }
 
   // ------------------------------------------------------------- boot screen
@@ -341,27 +323,27 @@ export class Overlay {
     this.bootNew.classList.remove('gw-hidden');
     this.bootResume.classList.add('gw-hidden');
     this.boot.classList.remove('gw-hidden');
-    this.nickInput.value = suggested;
+    this.nameInput.value = suggested;
     if (room.invited) {
       const join = this.q('gw-joining');
       join.textContent = room.host ? `JOINING ${room.host.toUpperCase()}' CITY` : `JOINING ROOM ${room.code}`;
       join.classList.remove('gw-hidden');
     }
-    window.setTimeout(() => this.nickInput.focus(), 60);
+    window.setTimeout(() => this.nameInput.focus(), 60);
   }
 
-  showResume(info: { nickname: string; score: number; best: number }) {
+  showResume(info: { name: string; score: number; best: number }) {
     this.bootNew.classList.add('gw-hidden');
     this.bootResume.classList.remove('gw-hidden');
     this.boot.classList.remove('gw-hidden');
-    this.q('gw-welcome').textContent = `welcome back, ${info.nickname.toLowerCase()}.`;
+    this.q('gw-welcome').textContent = `welcome back, ${info.name}.`;
     this.q('gw-resume-score').textContent = info.score.toLocaleString('en-US');
     this.q('gw-resume-best').textContent = info.best.toLocaleString('en-US');
   }
 
-  rejectNickname(message: string) {
+  rejectName(message: string) {
     this.error.textContent = message;
-    this.nickInput.focus();
+    this.nameInput.focus();
   }
 
   hideBoot() {
@@ -414,13 +396,8 @@ export class Overlay {
       who.className = 'gw-who';
       const name = document.createElement('span');
       name.className = 'gw-name';
-      name.textContent = `${entry.crewTag ? `[${entry.crewTag}] ` : ''}${entry.name.toUpperCase()}`;
+      name.textContent = `${entry.crewTag ? `[${entry.crewTag}] ` : ''}${entry.name}`;
       who.appendChild(name);
-      if (entry.handle) {
-        const handle = document.createElement('small');
-        handle.textContent = `@${entry.handle}`;
-        who.appendChild(handle);
-      }
 
       const score = document.createElement('span');
       score.className = 'gw-score';
@@ -506,6 +483,7 @@ export class Overlay {
   }
 
   openSettings(scrollTo?: string) {
+    this.refreshDisplay();
     this.settings.classList.remove('gw-hidden');
     this.onSettingsOpen?.();
     if (scrollTo) this.q(scrollTo).scrollIntoView({ block: 'start' });
@@ -520,9 +498,8 @@ export class Overlay {
   }
 
   /** Keeps the settings fields in step with the live identity and crew. */
-  setPlayerInfo(nickname: string, handle: string | undefined, crew: Crew | null) {
-    if (document.activeElement !== this.setNickInput) this.setNickInput.value = nickname;
-    if (document.activeElement !== this.setHandleInput) this.setHandleInput.value = handle ? `@${handle}` : '';
+  setPlayerInfo(name: string, crew: Crew | null) {
+    if (document.activeElement !== this.setNameInput) this.setNameInput.value = name;
     this.crewState.textContent = crew ? `[${crew.tag}] ${crew.name}` : 'NO CREW';
     this.crewState.style.color = crew ? `#${crew.accent.toString(16).padStart(6, '0')}` : '';
     if (crew && document.activeElement !== this.crewNameInput) {
@@ -530,6 +507,58 @@ export class Overlay {
       this.crewTagInput.value = crew.tag;
     }
     this.setInviteLabel(crew ? `JOIN [${crew.tag}]` : 'INVITE');
+  }
+
+  /** Layout mode drives the CSS; the canvas drives the top inset. */
+  setLayout(mode: 'desktop' | 'portrait' | 'landscape') {
+    this.root.dataset.layout = mode;
+  }
+
+  setTopInset(px: number) {
+    this.root.style.setProperty('--gw-hud-top', `${px}px`);
+  }
+
+  /**
+   * iOS cannot be asked to install anything, so we say what to do instead of
+   * pretending. Everything below is optional: the game plays fine in Safari.
+   */
+  private refreshDisplay() {
+    const standalone =
+      matchMedia('(display-mode: standalone)').matches ||
+      matchMedia('(display-mode: fullscreen)').matches ||
+      (navigator as unknown as { standalone?: boolean }).standalone === true;
+    const canFullscreen = typeof document.documentElement.requestFullscreen === 'function';
+    const ios = /iP(hone|ad|od)/.test(navigator.userAgent);
+
+    const state = this.q('gw-display-state');
+    const hint = this.q('gw-display-hint');
+    const button = this.q<HTMLButtonElement>('gw-fullscreen');
+
+    if (standalone) {
+      state.textContent = 'FULLSCREEN ACTIVE';
+      hint.textContent = 'Running as a home screen app.';
+      button.classList.add('gw-hidden');
+      return;
+    }
+
+    button.classList.remove('gw-hidden');
+    state.textContent = 'IN BROWSER';
+    if (canFullscreen && !ios) {
+      button.textContent = 'PLAY FULLSCREEN';
+      hint.textContent = '';
+    } else {
+      button.textContent = 'HOW TO GO FULLSCREEN';
+      hint.textContent =
+        'Add Getaway to your Home Screen to play without Safari bars: Share → Add to Home Screen → open it from there.';
+    }
+  }
+
+  private goFullscreen() {
+    const el = document.documentElement;
+    if (typeof el.requestFullscreen === 'function' && !document.fullscreenElement) {
+      el.requestFullscreen().catch(() => this.toast('FULLSCREEN NOT AVAILABLE'));
+    }
+    this.refreshDisplay();
   }
 
   setAnalyticsState(enabled: boolean, note = '', available = true) {
@@ -573,20 +602,6 @@ export class Overlay {
     toggle.textContent = muted ? 'OFF' : 'ON';
   }
 
-  /**
-   * Landscape is the intended way to play on a phone. We cannot force it, so
-   * we ask, and get out of the way the moment the phone is turned.
-   */
-  private watchOrientation() {
-    if (!hasTouch) return;
-    const query = matchMedia('(orientation: portrait)');
-    const apply = () => this.rotate.classList.toggle('gw-hidden', !query.matches);
-    apply();
-    if (query.addEventListener) query.addEventListener('change', apply);
-    else query.addListener(apply);
-    window.addEventListener('orientationchange', () => window.setTimeout(apply, 150));
-    window.setInterval(apply, 600);
-  }
 }
 
 function formatClock(seconds: number): string {
@@ -603,5 +618,10 @@ export function initOverlay(muted: boolean): Overlay {
 
 export function getOverlay(): Overlay {
   if (!overlay) throw new Error('overlay not initialised');
+  return overlay;
+}
+
+/** The overlay if it exists yet — the viewport code runs before it is built. */
+export function peekOverlay(): Overlay | null {
   return overlay;
 }

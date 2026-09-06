@@ -10,7 +10,11 @@
 
 .gw-root {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  /* Exactly the area Safari is showing, written from visualViewport. */
+  width: var(--gw-vw, 100vw);
+  height: var(--gw-vh, 100dvh);
   pointer-events: none;
   font-family: var(--gw-mono);
   color: var(--gw-ink);
@@ -41,6 +45,55 @@
   align-items: stretch;
   gap: 7px;
   pointer-events: none;
+}
+
+/*
+ * PORTRAIT: the column spans the width and starts below the meters the canvas
+ * draws (--gw-hud-top is measured and published by the HUD itself), so the
+ * objective card can never sit on the HEAT bar or on the thumb controls.
+ */
+.gw-root[data-layout='portrait'] .gw-column {
+  top: calc(var(--gw-hud-top, 120px) + 6px);
+  left: calc(10px + env(safe-area-inset-left, 0px));
+  right: calc(10px + env(safe-area-inset-right, 0px));
+  width: auto;
+  max-height: 42%;
+}
+
+.gw-root[data-layout='portrait'] .gw-hud {
+  justify-content: flex-start;
+}
+
+.gw-root[data-layout='portrait'] .gw-objective {
+  padding: 8px 11px;
+}
+
+.gw-root[data-layout='portrait'] .gw-panel {
+  max-height: 34vh;
+}
+
+/* LANDSCAPE: vertical space is the scarce resource. */
+.gw-root[data-layout='landscape'] .gw-column {
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  width: min(226px, 34vw);
+  max-height: calc(100% - 130px);
+  gap: 5px;
+}
+
+.gw-root[data-layout='landscape'] .gw-objective {
+  padding: 7px 9px;
+}
+
+.gw-root[data-layout='landscape'] .gw-objective h4 {
+  margin-bottom: 2px;
+}
+
+.gw-root[data-layout='landscape'] .gw-feed {
+  display: none;
+}
+
+.gw-root[data-layout='landscape'] .gw-panel {
+  max-height: 46vh;
 }
 
 .gw-column > * {
@@ -420,49 +473,6 @@
   display: none !important;
 }
 
-/* ------------------------------------------------------------- orientation */
-
-.gw-rotate {
-  position: absolute;
-  inset: 0;
-  background: #0b0d12;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 22px;
-  pointer-events: auto;
-  z-index: 20;
-}
-
-.gw-rotate p {
-  margin: 0;
-  font-size: 13px;
-  letter-spacing: 4px;
-  color: var(--gw-ink);
-}
-
-.gw-rotate small {
-  font-size: 10px;
-  letter-spacing: 2px;
-  color: var(--gw-dim);
-}
-
-.gw-rotate svg {
-  width: 92px;
-  height: 92px;
-  animation: gw-tip 2.4s ease-in-out infinite;
-}
-
-@keyframes gw-tip {
-  0%, 40% { transform: rotate(0deg); }
-  60%, 100% { transform: rotate(-90deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .gw-rotate svg { animation: none; transform: rotate(-90deg); }
-}
-
 /* ----------------------------------------------------------- touch sizing */
 
 @media (pointer: coarse) {
@@ -492,9 +502,14 @@
   .gw-toasts { max-width: 70vw; text-align: center; }
 }
 
-@media (max-height: 420px) {
-  /* phone landscape: the column has to stay short */
-  .gw-column { max-height: calc(74% - env(safe-area-inset-top, 0px)); }
+@media (max-height: 430px) {
+  /* Very short landscape: shrink the chrome rather than the play area. */
+  .gw-chip, .gw-btn, .gw-icon { padding: 7px 8px; font-size: 9px; }
+  .gw-icon { width: 30px; padding: 7px 0; }
+  .gw-objective h4 { font-size: 9px; }
+  .gw-objective p { font-size: 9px; }
+  .gw-obj-meta { font-size: 9px; margin-top: 3px; }
+  .gw-nudge { display: none; }
 }
 
 /* --------------------------------------------------------------- resume */

@@ -4,8 +4,10 @@ import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
 import { bootSession } from './session';
+import { peekOverlay as getOverlay } from './ui/Overlay';
 import { Analytics, track } from './systems/Analytics';
-import { deviceType, hasTouch, isMobile, RENDER_SCALE } from './util/device';
+import { deviceType, hasTouch, isMobile, RENDER_SCALE, safeAreaInsets } from './util/device';
+import { hudTopInset, layout as gameLayout, setLayout } from './util/layout';
 
 const parent = document.getElementById('game')!;
 
@@ -35,12 +37,22 @@ if (isMobile) {
   TRAFFIC.spawnMax = 1300;
 }
 
-// Some embedders report 0 for the viewport on first paint, so clamp.
+/**
+ * The visible area, not the window. `visualViewport` is the only thing that
+ * knows how much of the screen Safari's chrome is currently taking.
+ */
 function viewport(): { w: number; h: number } {
-  const r = parent.getBoundingClientRect();
-  const w = Math.round(r.width || window.innerWidth || document.documentElement.clientWidth || 1280);
-  const h = Math.round(r.height || window.innerHeight || document.documentElement.clientHeight || 720);
+  const vv = window.visualViewport;
+  const rect = parent.getBoundingClientRect();
+  const w = Math.round(vv?.width || rect.width || window.innerWidth || document.documentElement.clientWidth || 1280);
+  const h = Math.round(vv?.height || rect.height || window.innerHeight || document.documentElement.clientHeight || 720);
   return { w: Math.max(w, 320), h: Math.max(h, 240) };
+}
+
+/** The on-screen keyboard shrinks the visual viewport; that is not a resize. */
+function typing(): boolean {
+  const el = document.activeElement;
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
 }
 
 const initial = viewport();
@@ -82,23 +94,46 @@ if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__game =
 let lastW = 0;
 let lastH = 0;
 function fit() {
+  if (typing()) return;
   const { w, h } = viewport();
   if (w === lastW && h === lastH) return;
   lastW = w;
   lastH = h;
+
+  // Publish the real size to CSS so the DOM overlay and the canvas agree to
+  // the pixel — otherwise controls can end up under Safari's toolbar.
+  const root = document.documentElement.style;
+  root.setProperty('--gw-vw', `${w}px`);
+  root.setProperty('--gw-vh', `${h}px`);
+
+  setLayout(w, h);
+  // Seed the column offset from the same formula the HUD publishes, so the
+  // overlay is positioned correctly on the very first paint too.
+  root.setProperty('--gw-hud-top', `${hudTopInset(gameLayout.mode, safeAreaInsets().top)}px`);
+  document.documentElement.dataset.layout = gameLayout.mode;
+  getOverlay()?.setLayout(gameLayout.mode);
   game.scale.resize(w * RENDER_SCALE, h * RENDER_SCALE);
 }
 
 window.addEventListener('resize', fit);
-window.addEventListener('orientationchange', () => window.setTimeout(fit, 120));
+window.addEventListener('orientationchange', () => {
+  // iOS reports the old size for a beat after the rotation animation starts.
+  window.setTimeout(fit, 80);
+  window.setTimeout(fit, 400);
+});
 window.visualViewport?.addEventListener('resize', fit);
+// Safari moves the visual viewport as its toolbars collapse; that is a resize
+// for our purposes even though no resize event fires.
+window.visualViewport?.addEventListener('scroll', fit);
 if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(parent);
 game.events.once('ready', fit);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) window.setTimeout(fit, 60);
+});
 
-// Mobile Safari does not always fire an event when the address bar collapses
-// or the device rotates. `fit` is a no-op unless the size actually changed,
-// so polling it is the cheapest way to never be left at the wrong size.
-window.setInterval(fit, 500);
+// Belt and braces: Safari does not reliably fire anything when the chrome
+// changes. `fit` is a no-op unless the size actually changed.
+window.setInterval(fit, 400);
 
 document.addEventListener('visibilitychange', () => {
   track(document.hidden ? 'game_paused' : 'game_resumed');

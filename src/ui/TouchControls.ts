@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { resetTouchState, touchState } from '../systems/Input';
 import { safeAreaInsets } from '../util/device';
+import { layout } from '../util/layout';
 import { clamp } from '../util/math';
 
 export type ControlMode = 'foot' | 'drive';
@@ -89,6 +90,17 @@ export class TouchControls {
     }
   }
 
+  /** Left edge of the button cluster, so readouts can sit beside it. */
+  get occludedLeft(): number {
+    if (!this.enabled) return Number.POSITIVE_INFINITY;
+    let left = Number.POSITIVE_INFINITY;
+    for (const b of this.buttons) {
+      if (!this.visible(b.id)) continue;
+      left = Math.min(left, b.x);
+    }
+    return left;
+  }
+
   /** Top edge of the button cluster, so the HUD can stay clear of thumbs. */
   get occludedTop(): number {
     if (!this.enabled) return Number.POSITIVE_INFINITY;
@@ -130,7 +142,9 @@ export class TouchControls {
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
     const s = this.scale;
-    const unit = Math.min(w, h);
+    const portrait = layout.mode === 'portrait';
+    // Portrait has width to spare and little height; landscape is the reverse.
+    const unit = portrait ? Math.min(w * 0.9, h * 0.42) : Math.min(w, h);
 
     this.radius = clamp(unit * 0.15, 54 * s, 128 * s);
     this.base.setDisplaySize(this.radius * 2, this.radius * 2);
@@ -143,7 +157,7 @@ export class TouchControls {
     const marginR = base + inset.right * s;
     const marginB = base + inset.bottom * s;
     const gap = 10 * s;
-    const b = clamp(unit * 0.17, 62 * s, 128 * s);
+    const b = clamp(unit * (portrait ? 0.2 : 0.17), 62 * s, 128 * s);
     const bigW = b * 1.45;
     const bigH = b * 1.02;
     const sideW = b * 1.02;
@@ -239,8 +253,11 @@ export class TouchControls {
     if (!this.enabled) return;
 
     const pointers = this.scene.input.manager.pointers;
-    const stickZone = this.scene.scale.width * 0.48;
-    const topGuard = this.scene.scale.height * 0.16;
+    const portrait = layout.mode === 'portrait';
+    // In portrait the HUD sits across the top, so the stick only claims the
+    // lower half; in landscape it can have the whole left side.
+    const stickZone = this.scene.scale.width * (portrait ? 0.62 : 0.48);
+    const topGuard = this.scene.scale.height * (portrait ? 0.42 : 0.16);
 
     // 1. buttons: any finger inside a visible button counts as holding it
     for (const button of this.buttons) {

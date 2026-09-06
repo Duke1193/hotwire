@@ -9,7 +9,6 @@ import { SupabaseTransport } from './SupabaseTransport';
 export interface PlayerState {
   playerId: string;
   nickname: string;
-  handle?: string;
   crewTag?: string;
   x: number;
   y: number;
@@ -40,7 +39,6 @@ export interface Sample {
 export interface Peer {
   id: string;
   nickname: string;
-  handle?: string;
   crewTag?: string;
   crewName?: string;
   score: number;
@@ -77,15 +75,13 @@ export class MultiplayerSystem {
   /** Nickname and handle can change from the settings panel at any time. */
   setIdentity(identity: Identity) {
     this.identity = identity;
-    this.presence.nickname = identity.nickname;
-    this.presence.handle = identity.handle;
+    this.presence.nickname = identity.name;
   }
 
   constructor(private identity: Identity, readonly room: string) {
     this.presence = {
       playerId: identity.id,
-      nickname: identity.nickname,
-      handle: identity.handle,
+      nickname: identity.name,
       score: 0,
       kills: 0,
       heat: 0,
@@ -164,7 +160,7 @@ export class MultiplayerSystem {
   meta = { crewTag: undefined as string | undefined, crewName: undefined as string | undefined, kills: 0 };
 
   /** Rate-limited transform broadcast: fast while moving, a trickle when idle. */
-  publish(state: Omit<PlayerState, 'playerId' | 'nickname' | 'handle' | 'crewTag' | 'updatedAt'>, moving: boolean) {
+  publish(state: Omit<PlayerState, 'playerId' | 'nickname' | 'crewTag' | 'updatedAt'>, moving: boolean) {
     if (!this.transport) return;
     const now = performance.now();
     const gap = 1000 / (moving ? NET.sendHz : NET.idleHz);
@@ -174,8 +170,7 @@ export class MultiplayerSystem {
     const full: PlayerState = {
       ...state,
       playerId: this.identity.id,
-      nickname: this.identity.nickname,
-      handle: this.identity.handle,
+      nickname: this.identity.name,
       crewTag: this.meta.crewTag,
       updatedAt: Date.now(),
     };
@@ -185,8 +180,7 @@ export class MultiplayerSystem {
       this.lastPresence = now;
       this.presence = {
         playerId: this.identity.id,
-        nickname: this.identity.nickname,
-        handle: this.identity.handle,
+        nickname: this.identity.name,
         crewTag: this.meta.crewTag,
         crewName: this.meta.crewName,
         score: state.score,
@@ -234,7 +228,6 @@ export class MultiplayerSystem {
 
     const peer = this.ensure(from, s.nickname);
     peer.nickname = s.nickname || peer.nickname;
-    if (s.handle) peer.handle = s.handle;
     peer.crewTag = s.crewTag;
     peer.heat = s.heat;
     peer.score = s.score;
@@ -286,7 +279,6 @@ export class MultiplayerSystem {
       seen.add(info.playerId);
       const peer = this.ensure(info.playerId, info.nickname);
       peer.nickname = info.nickname || peer.nickname;
-      if (info.handle) peer.handle = info.handle;
       peer.crewTag = info.crewTag;
       peer.crewName = info.crewName;
       peer.score = info.score;

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { HEAT } from '../config';
 import { TouchControls } from '../ui/TouchControls';
 import { hasTouch, RENDER_SCALE, safeAreaInsets, UI_SCALE } from '../util/device';
+import { hudTopInset, layout } from '../util/layout';
 import { clamp, lerp } from '../util/math';
 import { GameScene } from './GameScene';
 
@@ -48,6 +49,9 @@ export class UIScene extends Phaser.Scene {
   private shownScore = 0;
   private introMs = 0;
   private region = { left: 0, right: 0, top: 0, bottom: 0, cx: 0, cy: 0 };
+  private barWidth = 250;
+  private lastInset = -1;
+  private safeTop = 0;
 
   constructor() {
     super('ui');
@@ -121,16 +125,35 @@ export class UIScene extends Phaser.Scene {
     const w = this.scale.width;
     const h = this.scale.height;
     const inset = safeAreaInsets();
+    this.safeTop = inset.top;
+    const portrait = layout.mode === 'portrait';
 
-    this.region.left = 20 * S + inset.left * RENDER_SCALE;
-    this.region.right = w - 22 * S - inset.right * RENDER_SCALE;
-    this.region.top = 18 * S + inset.top * RENDER_SCALE;
-    this.region.bottom = h - 16 * S - inset.bottom * RENDER_SCALE;
+    // Portrait is narrow and tall: pull the margins in and let the meters use
+    // more of the width, because nothing sits beside them.
+    const margin = portrait ? 12 * S : 20 * S;
+    this.region.left = margin + inset.left * RENDER_SCALE;
+    this.region.right = w - margin - 2 * S - inset.right * RENDER_SCALE;
+    this.region.top = (portrait ? 12 * S : 18 * S) + inset.top * RENDER_SCALE;
+    this.region.bottom = h - (portrait ? 12 * S : 16 * S) - inset.bottom * RENDER_SCALE;
     this.region.cx = w / 2;
     this.region.cy = h / 2;
+    this.barWidth = portrait ? Math.min(210 * S, w * 0.54) : Math.min(250 * S, w * 0.34);
+
     this.vignette?.setDisplaySize(this.scale.width, this.scale.height);
     this.touch?.layout();
     this.place();
+    this.publishInset();
+  }
+
+  /**
+   * Tells the DOM overlay how far down its column has to start so it clears
+   * the meters the canvas draws. Measured from the real regions, not assumed.
+   */
+  private publishInset() {
+    const css = hudTopInset(layout.mode, this.safeTop);
+    if (css === this.lastInset) return;
+    this.lastInset = css;
+    this.game_?.overlay?.setTopInset(css);
   }
 
   /** Positions everything from the current regions. */
@@ -138,7 +161,17 @@ export class UIScene extends Phaser.Scene {
     const r = this.region;
     // The bottom row has to clear the on-screen buttons, wherever they are.
     const thumbTop = this.touch ? this.touch.occludedTop : Number.POSITIVE_INFINITY;
+    const thumbLeft = this.touch ? this.touch.occludedLeft : Number.POSITIVE_INFINITY;
     const bottom = Math.min(r.bottom, thumbTop - 14 * S);
+
+    /*
+     * With touch controls up, the speed and weapon belong *beside* the driving
+     * buttons, not at the screen edge: on a short landscape phone the right
+     * edge is already spoken for by the objective column, and that is exactly
+     * where they used to collide on a real device.
+     */
+    const readoutRight = Number.isFinite(thumbLeft) ? Math.max(thumbLeft - 12 * S, r.left + 60 * S) : r.right;
+    const readoutBottom = Number.isFinite(thumbLeft) ? r.bottom : bottom;
 
     this.heatLabel.setPosition(r.left, r.top);
     this.status.setPosition(r.left, r.top + 46 * S);
@@ -149,12 +182,12 @@ export class UIScene extends Phaser.Scene {
     // element's measured height, so nothing can grow into anything else
     // whatever the font metrics or the size of the numbers turn out to be.
     const gap = 4 * S;
-    let stack = bottom;
-    this.speedUnit.setPosition(r.right, stack);
+    let stack = readoutBottom;
+    this.speedUnit.setPosition(readoutRight, stack);
     stack -= this.speedUnit.height + gap;
-    this.speed.setPosition(r.right, stack);
+    this.speed.setPosition(readoutRight, stack);
     stack -= this.speed.height + gap * 2;
-    this.weapon.setPosition(r.right, stack);
+    this.weapon.setPosition(readoutRight, stack);
 
     // Same idea along the bottom centre.
     let centre = bottom;
@@ -166,7 +199,7 @@ export class UIScene extends Phaser.Scene {
     this.hint.setPosition(r.left, this.scale.height - 14 * S);
 
     this.alert.setPosition(r.cx, r.top + 6 * S);
-    const annY = this.scale.height * 0.3;
+    const annY = this.scale.height * (layout.mode === 'portrait' ? 0.34 : 0.3);
     this.annKicker.setPosition(r.cx, annY - this.annTitle.height - 6 * S);
     this.annTitle.setPosition(r.cx, annY);
     this.annLine.setPosition(r.cx, annY + 8 * S);
@@ -183,6 +216,7 @@ export class UIScene extends Phaser.Scene {
     this.title.setAlpha(introFade * (1 - hud.announceAlpha));
     if (!hasTouch) this.hint.setAlpha(clamp((this.introMs - 300) / 800, 0, 1) * 0.9);
 
+    this.publishInset();
     this.touch.setEnabled(hasTouch && hud.live);
     this.touch.setMode(hud.driving ? 'drive' : 'foot');
     this.touch.setArmed(Boolean(hud.weapon));
@@ -238,7 +272,7 @@ export class UIScene extends Phaser.Scene {
   private drawHeatBar(hud: GameScene['hud']) {
     const x = this.region.left;
     const y = this.region.top + 20 * S;
-    const w = Math.min(250 * S, this.scale.width * 0.34);
+    const w = this.barWidth;
     const h = 19 * S;
     const t = this.shownHeat / HEAT.max;
     const colour = LEVEL_COLORS[Math.min(hud.heatLevel, LEVEL_COLORS.length - 1)];
@@ -284,7 +318,7 @@ export class UIScene extends Phaser.Scene {
   private drawVitals(hud: GameScene['hud']) {
     const x = this.region.left;
     const y = this.region.top + 118 * S;
-    const w = Math.min(150 * S, this.scale.width * 0.22);
+    const w = this.barWidth * 0.6;
     const h = 9 * S;
     const health = hud.health <= 0.3 ? 0xff4d3d : hud.health <= 0.6 ? 0xffb347 : 0x7ee0a1;
 
@@ -314,7 +348,7 @@ export class UIScene extends Phaser.Scene {
   /** A plate under the speed and weapon so they read against a bright street. */
   private drawDriverPlate(hud: GameScene['hud']) {
     const pad = 8 * S;
-    const right = this.region.right + pad * 0.6;
+    const right = Math.min(this.speedUnit.getBounds().right + pad * 0.6, this.scale.width - 2 * S);
     const top = (hud.weapon ? this.weapon.getBounds().y : this.speed.getBounds().y) - pad * 0.5;
     const bottom = this.speedUnit.getBounds().y + this.speedUnit.getBounds().height + pad * 0.4;
     const left = Math.min(this.speed.getBounds().x, hud.weapon ? this.weapon.getBounds().x : Infinity) - pad;
