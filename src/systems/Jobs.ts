@@ -6,6 +6,9 @@ import type { ScoreSystem } from './Score';
 
 type State = 'off' | 'offered' | 'carrying';
 
+/** How long a job waits before it lapses. */
+const EXPIRY_MS = 210000;
+
 /**
  * One job loop: drive to a pickup, then drive to a drop-off. No cargo, no
  * economy — it exists to give the city a reason to drive somewhere.
@@ -18,6 +21,9 @@ export class Jobs {
   enabled = false;
 
   onCompleted: ((points: number) => void) | null = null;
+  onOffered: (() => void) | null = null;
+  onPickedUp: (() => void) | null = null;
+  onFailed: (() => void) | null = null;
 
   private target = new Phaser.Math.Vector2();
   private from = new Phaser.Math.Vector2();
@@ -25,6 +31,8 @@ export class Jobs {
   private arrow: Phaser.GameObjects.Image;
   private cooldown = 3000;
   private pulse = 0;
+  /** Jobs lapse if they are abandoned, so the marker never sits there forever. */
+  private expiry = 0;
 
   constructor(scene: Phaser.Scene, private world: World, private score: ScoreSystem) {
     this.marker = scene.add.image(0, 0, 'marker').setDepth(7).setVisible(false).setAlpha(0.9);
@@ -37,6 +45,12 @@ export class Jobs {
     if (this.state === 'off') {
       this.cooldown -= dtMs;
       if (this.cooldown <= 0 && driving) this.offer(focus);
+      return;
+    }
+
+    this.expiry -= dtMs;
+    if (this.expiry <= 0) {
+      this.fail();
       return;
     }
 
@@ -74,7 +88,9 @@ export class Jobs {
     this.state = 'offered';
     this.label = 'PICK UP';
     this.marker.setVisible(true).setPosition(spot.x, spot.y);
-    track('mission_started');
+    this.expiry = EXPIRY_MS;
+    track('mission_started', { kind: 'delivery' });
+    this.onOffered?.();
   }
 
   private pickUp(focus: Phaser.Math.Vector2) {
@@ -85,6 +101,8 @@ export class Jobs {
     this.state = 'carrying';
     this.label = 'DELIVER';
     this.marker.setPosition(spot.x, spot.y);
+    this.expiry = EXPIRY_MS;
+    this.onPickedUp?.();
   }
 
   private deliver() {
@@ -96,7 +114,19 @@ export class Jobs {
     this.cooldown = 6000;
     this.marker.setVisible(false);
     this.arrow.setVisible(false);
-    track('mission_completed', { points });
+    track('mission_completed', { points, kind: 'delivery' });
     this.onCompleted?.(points);
+  }
+
+  /** Abandoned for long enough: quietly drop it and offer another later. */
+  private fail() {
+    const stage = this.state;
+    this.state = 'off';
+    this.label = '';
+    this.cooldown = 8000;
+    this.marker.setVisible(false);
+    this.arrow.setVisible(false);
+    track('mission_failed', { kind: 'delivery', stage });
+    this.onFailed?.();
   }
 }

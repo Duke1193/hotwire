@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { isMobile } from '../util/device';
 
 /** Skid marks, dust, sparks and impact feedback. */
 export class Effects {
@@ -60,9 +61,11 @@ export class Effects {
   }
 
   impact(x: number, y: number, magnitude: number) {
-    const n = Phaser.Math.Clamp(Math.floor(magnitude * 2.2), 3, 26);
+    // Phones get a lighter shower; the shake and the sound carry the hit.
+    const cap = isMobile ? 12 : 26;
+    const n = Phaser.Math.Clamp(Math.floor(magnitude * (isMobile ? 1.4 : 2.2)), 3, cap);
     this.sparks.emitParticleAt(x, y, n);
-    if (magnitude > 5) this.smoke.emitParticleAt(x, y, 2);
+    if (magnitude > 5 && !isMobile) this.smoke.emitParticleAt(x, y, 2);
 
     const cam = this.scene.cameras.main;
     const strength = Phaser.Math.Clamp(magnitude / 220, 0.0015, 0.022);
@@ -71,6 +74,6 @@ export class Effects {
 
   /** Cheap off-screen-ish hit: a few sparks, no shake. */
   bump(x: number, y: number, count = 4) {
-    this.sparks.emitParticleAt(x, y, count);
+    this.sparks.emitParticleAt(x, y, isMobile ? 2 : count);
   }
 }

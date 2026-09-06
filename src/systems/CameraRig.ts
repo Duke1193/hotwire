@@ -1,11 +1,14 @@
 import Phaser from 'phaser';
 import { CAM } from '../config';
 import { clamp, lerp } from '../util/math';
+import { RENDER_SCALE } from '../util/device';
 
 /** Smooth follow with a bit of look-ahead and speed-based zoom-out. */
 export class CameraRig {
   private lead = new Phaser.Math.Vector2();
-  private zoom = CAM.zoomFoot;
+  // The canvas is rendered at device pixels, so every zoom is scaled to match
+  // and the world keeps the same on-screen size everywhere.
+  private zoom = CAM.zoomFoot * RENDER_SCALE;
 
   constructor(private cam: Phaser.Cameras.Scene2D.Camera) {
     this.cam.setZoom(this.zoom);
@@ -24,7 +27,8 @@ export class CameraRig {
     // followOffset is subtracted from the target, so negate to look ahead
     this.cam.setFollowOffset(-this.lead.x, -this.lead.y);
 
-    const target = driving ? lerp(CAM.zoomCar, CAM.zoomFast, clamp(speedRatio, 0, 1)) : CAM.zoomFoot;
+    const base = driving ? lerp(CAM.zoomCar, CAM.zoomFast, clamp(speedRatio, 0, 1)) : CAM.zoomFoot;
+    const target = base * RENDER_SCALE;
     this.zoom = lerp(this.zoom, target, clamp(0.035 * dtScale, 0, 1));
     this.cam.setZoom(this.zoom);
   }

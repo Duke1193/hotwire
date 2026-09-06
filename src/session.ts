@@ -1,6 +1,6 @@
 import { MultiplayerSystem } from './net/Multiplayer';
 import { inviteUrl, resolveRoom, RoomInfo } from './net/Room';
-import { track } from './systems/Analytics';
+import { Analytics, track } from './systems/Analytics';
 import { AudioBus } from './systems/Audio';
 import { Identity, loadIdentity, sanitizeNickname, saveIdentity } from './systems/Identity';
 import { getOverlay, initOverlay, Overlay } from './ui/Overlay';
@@ -85,7 +85,11 @@ function finish(identity: Identity, room: RoomInfo, audio: AudioBus, overlay: Ov
 
   overlay.onInvite = session.invite;
   overlay.setRoom(room.code, 1, 'offline');
-  track('game_started', { room: room.code, returning });
+
+  Analytics.identify(identity.id);
+  Analytics.setContext({ room_id: room.code, nickname_set: true, multiplayer: false, online_player_count: 1 });
+  track(room.invited ? 'room_joined' : 'room_created', { invited: room.invited });
+  track('game_started', { returning });
 
   // Never block the game on the network.
   void net.connect().then(() => overlay.setRoom(room.code, net.onlineCount, net.status));
@@ -99,11 +103,11 @@ function finish(identity: Identity, room: RoomInfo, audio: AudioBus, overlay: Ov
  * actually the nicer interaction (touch devices).
  */
 function shareInvite(room: RoomInfo, identity: Identity, overlay: Overlay, offline: boolean) {
-  track('invite_clicked', { room: room.code });
+  track('invite_clicked', { offline });
   const url = inviteUrl(room.code, identity.nickname);
 
   const copied = () => {
-    track('invite_copied', { room: room.code });
+    track('invite_copied');
     overlay.flashInvite('LINK COPIED');
     // Be honest when this build has no realtime credentials configured.
     overlay.toast(offline ? 'INVITE LINK COPIED · MULTIPLAYER OFFLINE' : 'INVITE LINK COPIED');
@@ -130,7 +134,7 @@ function shareInvite(room: RoomInfo, identity: Identity, overlay: Overlay, offli
   if (touch && navigator.share) {
     navigator
       .share({ title: 'GETAWAY', text: 'steal a car. lose the cops.', url })
-      .then(() => track('invite_copied', { room: room.code, via: 'share' }))
+      .then(() => track('invite_shared', { via: 'web_share' }))
       .catch(() => fallback());
     return;
   }

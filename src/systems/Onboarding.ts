@@ -1,4 +1,5 @@
 import { track } from './Analytics';
+import { hasTouch } from '../util/device';
 
 const KEY = 'getaway.onboarded';
 
@@ -13,15 +14,28 @@ export interface Progress {
   police: number;
 }
 
-const COPY: Record<Step, string> = {
-  move: 'MOVE  ·  W A S D',
-  ride: 'FIND A RIDE',
-  enter: 'PRESS  E  TO GET IN',
-  drive: 'DRIVE',
-  trouble: 'CAUSE SOME TROUBLE',
-  escape: 'LOSE THE PURSUIT',
-  done: 'NICE. FIND A JOB.',
-  finished: '',
+/** Never tell a phone to press W. The wording follows the input in use. */
+const COPY: Record<'keys' | 'touch', Record<Step, string>> = {
+  keys: {
+    move: 'MOVE  ·  W A S D',
+    ride: 'FIND A RIDE',
+    enter: 'PRESS  E  TO GET IN',
+    drive: 'DRIVE  ·  W',
+    trouble: 'CAUSE SOME TROUBLE',
+    escape: 'LOSE THE PURSUIT',
+    done: 'NICE. FIND A JOB.',
+    finished: '',
+  },
+  touch: {
+    move: 'MOVE  ·  DRAG ANYWHERE LEFT',
+    ride: 'FIND A RIDE',
+    enter: 'TAP  ENTER',
+    drive: 'HOLD  GO',
+    trouble: 'CAUSE SOME TROUBLE',
+    escape: 'LOSE THE PURSUIT',
+    done: 'NICE. FIND A JOB.',
+    finished: '',
+  },
 };
 
 /**
@@ -36,6 +50,7 @@ export class Onboarding {
 
   constructor() {
     this.step = localStorage.getItem(KEY) === '1' ? 'finished' : 'move';
+    if (this.step === 'move') track('onboarding_started');
   }
 
   get active() {
@@ -43,7 +58,7 @@ export class Onboarding {
   }
 
   get text() {
-    return COPY[this.step];
+    return COPY[hasTouch ? 'touch' : 'keys'][this.step];
   }
 
   /** True once the player is expected to look for work. */

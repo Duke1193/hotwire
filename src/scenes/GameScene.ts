@@ -6,7 +6,7 @@ import { CAR_SKINS } from '../gfx/Textures';
 import { HeatRun } from '../net/HeatRun';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { onSession, Session } from '../session';
-import { track, trackOnce } from '../systems/Analytics';
+import { Analytics, track, trackOnce } from '../systems/Analytics';
 import { AmbientEvents } from '../systems/AmbientEvents';
 import { CameraRig } from '../systems/CameraRig';
 import { Effects } from '../systems/Effects';
@@ -17,9 +17,11 @@ import { Hazard, Pedestrians } from '../systems/Pedestrians';
 import { PoliceSystem } from '../systems/PoliceSystem';
 import { ScoreSystem } from '../systems/Score';
 import { Traffic } from '../systems/Traffic';
-import { InputState, PlayerDriver } from '../systems/VehicleController';
+import { InputHub } from '../systems/Input';
+import { PlayerDriver } from '../systems/VehicleController';
 import { World } from '../world/World';
 import { clamp } from '../util/math';
+import { hasTouch, haptic, isMobile } from '../util/device';
 
 export interface Hud {
   heat: number;
@@ -47,8 +49,12 @@ export interface Hud {
 
 const ENTER_RADIUS = 82;
 const DISPATCH = ['PATROL DISPATCHED', 'BACKUP DISPATCHED', 'ALL UNITS RESPONDING'];
+/** Never show a key name to someone holding a phone. */
+const ENTER_LABEL = hasTouch ? 'ENTER' : '[E] ENTER';
+const EXIT_LABEL = hasTouch ? 'EXIT' : '[E] EXIT';
 const KMH_PER_UNIT = 19;
-const NO_INPUT: InputState = { up: false, down: false, left: false, right: false, handbrake: false };
+/** Skid marks are stamped less often on phones. */
+const SKID_EVERY = isMobile ? 3 : 2;
 
 export class GameScene extends Phaser.Scene {
   readonly hud: Hud = {
@@ -100,7 +106,7 @@ export class GameScene extends Phaser.Scene {
   private enterCooldown = 0;
   private alertT = 0;
 
-  private keys!: Record<string, Phaser.Input.Keyboard.Key>;
+  private hub!: InputHub;
   private frame = 0;
   private wheel = new Phaser.Math.Vector2();
   private focus = new Phaser.Math.Vector2();
@@ -118,6 +124,8 @@ export class GameScene extends Phaser.Scene {
   private pruneAt = 0;
   private escapes = 0;
   private jobsDone = 0;
+  private lastHeatLevel = 0;
+  private lastRunPhase = 'idle';
 
   private prompt!: Phaser.GameObjects.Container;
   private promptText!: Phaser.GameObjects.Text;
@@ -155,11 +163,7 @@ export class GameScene extends Phaser.Scene {
     this.rig = new CameraRig(this.cameras.main);
     this.rig.follow(this.player.sprite);
 
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,UP,LEFT,DOWN,RIGHT,E,SPACE') as Record<
-      string,
-      Phaser.Input.Keyboard.Key
-    >;
-    this.input.keyboard!.on('keydown-E', () => this.toggleVehicle());
+    this.hub = new InputHub(this);
 
     this.buildPrompt();
     this.matter.world.on('collisionstart', this.onCollision, this);
@@ -171,6 +175,9 @@ export class GameScene extends Phaser.Scene {
       this.traffic.shock(x, y, 320);
     };
     this.jobs.onCompleted = () => this.onJobDone();
+    this.jobs.onOffered = () => this.session?.audio.cue('missionAccepted');
+    this.jobs.onPickedUp = () => this.session?.audio.cue('checkpoint');
+    this.jobs.onFailed = () => this.session?.audio.cue('missionFailed');
 
     onSession((s) => this.attach(s));
 
@@ -188,7 +195,10 @@ export class GameScene extends Phaser.Scene {
 
     session.net.onEvent = (type, payload, from) => this.heatRun?.onNetEvent(type, payload, from);
     session.net.onRosterChange = () => this.refreshRoster();
-    session.net.onPeerJoin = (peer) => session.overlay.toast(`${peer.nickname.toUpperCase()} JOINED`);
+    session.net.onPeerJoin = (peer) => {
+      session.overlay.toast(`${peer.nickname.toUpperCase()} JOINED`);
+      session.audio.cue('playerJoined');
+    };
     session.overlay.onHeatRun = () => this.heatRun?.start();
     this.refreshRoster();
   }
@@ -234,7 +244,7 @@ export class GameScene extends Phaser.Scene {
   private buildPrompt() {
     this.promptBg = this.add.graphics();
     this.promptText = this.add
-      .text(0, 0, '[E] ENTER', { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '15px', color: '#f4f7ff' })
+      .text(0, 0, ENTER_LABEL, { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '15px', color: '#f4f7ff' })
       .setOrigin(0.5, 0.5);
     this.prompt = this.add.container(0, 0, [this.promptBg, this.promptText]).setDepth(40).setVisible(false);
 
@@ -247,18 +257,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------- input
-
-  private readInput(): InputState {
-    if (!this.live) return NO_INPUT;
-    const k = this.keys;
-    return {
-      up: k.W.isDown || k.UP.isDown,
-      down: k.S.isDown || k.DOWN.isDown,
-      left: k.A.isDown || k.LEFT.isDown,
-      right: k.D.isDown || k.RIGHT.isDown,
-      handbrake: k.SPACE.isDown,
-    };
-  }
 
   private toggleVehicle() {
     if (!this.live || this.enterCooldown > 0) return;
@@ -279,7 +277,8 @@ export class GameScene extends Phaser.Scene {
     this.player.setActive(false);
     this.prompt.setVisible(false);
     this.rig.follow(v.sprite);
-    trackOnce('vehicle_entered', { skin: v.skin.key });
+    track('vehicle_entered');
+    trackOnce('first_vehicle_entered');
   }
 
   private exitVehicle() {
@@ -291,6 +290,7 @@ export class GameScene extends Phaser.Scene {
     this.current = null;
     this.player.setActive(true, side.x, side.y);
     this.rig.follow(this.player.sprite);
+    track('vehicle_exited');
   }
 
   private freeSideOf(v: Vehicle): Phaser.Math.Vector2 {
@@ -356,6 +356,7 @@ export class GameScene extends Phaser.Scene {
       if (playerInvolved) {
         this.effects.impact(cx, cy, mag);
         this.hear(cx, cy, 'crash', mag);
+        if (mag > 6) haptic(28);
       } else if (mag > 3.4 && this.cameras.main.worldView.contains(cx, cy)) {
         this.effects.bump(cx, cy);
         if (mag > 5) this.hear(cx, cy, 'crash', mag * 0.6);
@@ -387,14 +388,16 @@ export class GameScene extends Phaser.Scene {
 
   // ------------------------------------------------------------- loop
 
-  override update(_time: number, delta: number) {
+  override update(time: number, delta: number) {
     const dt = Math.min(delta, 50);
     const dtScale = dt / 16.6667;
     this.frame++;
     this.enterCooldown = Math.max(0, this.enterCooldown - dt);
 
-    const input = this.readInput();
-    const before = { x: this.focus.x, y: this.focus.y };
+    const input = this.hub.update(this.live);
+    if (this.hub.consumeAction()) this.toggleVehicle();
+    const beforeX = this.focus.x;
+    const beforeY = this.focus.y;
 
     if (this.current) {
       this.current.controls = this.driver.control(input);
@@ -402,15 +405,14 @@ export class GameScene extends Phaser.Scene {
       this.focus.set(this.current.x, this.current.y);
       const body = this.current.sprite.body as MatterJS.BodyType;
       this.vel.set(body.velocity.x, body.velocity.y);
-      this.driven += Math.hypot(this.focus.x - before.x, this.focus.y - before.y);
+      this.driven += Math.hypot(this.focus.x - beforeX, this.focus.y - beforeY);
+      if (Math.abs(this.current.forwardSpeed) > DRIVE.maxSpeed * 0.4) trackOnce('first_drive');
     } else {
-      const ix = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-      const iy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-      this.player.update(dtScale, ix, iy);
+      this.player.update(dtScale, input.moveX, input.moveY);
       this.focus.set(this.player.x, this.player.y);
       const body = this.player.sprite.body as MatterJS.BodyType;
       this.vel.set(body.velocity.x, body.velocity.y);
-      this.walked += Math.hypot(this.focus.x - before.x, this.focus.y - before.y);
+      this.walked += Math.hypot(this.focus.x - beforeX, this.focus.y - beforeY);
     }
 
     for (const v of this.cars) {
@@ -439,11 +441,17 @@ export class GameScene extends Phaser.Scene {
     this.tyreFx();
     this.updatePrompt();
     this.network(dt);
-    this.updateAudio();
+    this.updateAudio(time);
 
     if (this.heat.levelUp) {
       this.hud.alert = DISPATCH[Math.min(this.heat.level, DISPATCH.length) - 1];
       this.alertT = 2200;
+      haptic([0, 24, 40, 24]);
+      this.session?.audio.cue('heat');
+    }
+    if (this.heat.level !== this.lastHeatLevel) {
+      track('heat_level_changed', { level: this.heat.level, from: this.lastHeatLevel });
+      this.lastHeatLevel = this.heat.level;
     }
     this.alertT = Math.max(0, this.alertT - dt);
 
@@ -510,6 +518,8 @@ export class GameScene extends Phaser.Scene {
       this.heatPeak = 0;
       this.escapes++;
       track('pursuit_escaped', { level });
+      trackOnce('first_pursuit_escaped', { level });
+      this.session?.audio.cue('escaped');
       this.refreshRoster();
       if (this.escapes === 1) this.nudge('THAT WAS CLOSE.');
     }
@@ -517,6 +527,9 @@ export class GameScene extends Phaser.Scene {
 
   private onJobDone() {
     this.jobsDone++;
+    trackOnce('first_mission_completed');
+    haptic([0, 18, 50, 26]);
+    this.session?.audio.cue('missionDone');
     this.refreshRoster();
     if (this.jobsDone === 1) this.nudge('FIRST JOB DONE.');
   }
@@ -562,6 +575,11 @@ export class GameScene extends Phaser.Scene {
     );
 
     this.remotes?.update();
+    if (this.heatRun && this.heatRun.phase !== this.lastRunPhase) {
+      this.lastRunPhase = this.heatRun.phase;
+      if (this.lastRunPhase === 'running') session.audio.cue('heatRunStart');
+      if (this.lastRunPhase === 'over') session.audio.cue('heatRunWin');
+    }
     this.heatRun?.update(dt, this.heat.value, this.heat.level, this.police.count, (points) => {
       this.score.add(points, 'HEAT RUN');
       this.refreshRoster();
@@ -572,16 +590,27 @@ export class GameScene extends Phaser.Scene {
       this.pruneAt = 2000;
       session.net.prune();
       session.overlay.setRoom(session.room.code, session.net.onlineCount, session.net.status);
+      Analytics.setContext({
+        online_player_count: session.net.onlineCount,
+        multiplayer: session.net.onlineCount > 1,
+        current_heat: Math.round(this.heat.value),
+        score: this.score.value,
+      });
     }
   }
 
-  private updateAudio() {
+  private updateAudio(nowMs: number) {
     const audio = this.session?.audio;
     if (!audio) return;
-    const ratio = this.current ? Math.abs(this.current.forwardSpeed) / DRIVE.maxSpeed : 0;
-    audio.engine(ratio, this.current ? this.current.controls.throttle : 0);
+    const v = this.current;
+    const ratio = v ? Math.abs(v.forwardSpeed) / DRIVE.maxSpeed : 0;
+    audio.engine(ratio, v ? v.controls.throttle : 0, !!v);
+    audio.tyres(v ? clamp((Math.abs(v.lateralSpeed) - 1.2) / 4.5, 0, 1) : 0);
+    if (v && v.controls.brake > 0.5 && v.forwardSpeed > 6) audio.brake(0);
+
     const chasing = this.police.count > 0 && this.police.nearestDist < 900;
     audio.siren(chasing || !!this.ambient.pursuitCar, chasing ? clamp(1 - this.police.nearestDist / 900, 0, 1) : 0.25);
+    audio.ambience(nowMs);
   }
 
   // ------------------------------------------------------------- hud + fx
@@ -609,7 +638,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private tyreFx() {
-    if (this.frame % 2 !== 0) return;
+    if (this.frame % SKID_EVERY !== 0) return;
     const all: Vehicle[] = [];
     if (this.current) all.push(this.current);
     for (const p of this.police.patrols) all.push(p.vehicle);
@@ -633,7 +662,7 @@ export class GameScene extends Phaser.Scene {
     if (this.current) {
       this.nearby = null;
       const canExit = Math.abs(this.current.forwardSpeed) <= DRIVE.exitSpeed;
-      this.hud.prompt = canExit ? '[E] EXIT' : '';
+      this.hud.prompt = canExit ? EXIT_LABEL : '';
       this.prompt.setVisible(false);
       return;
     }
@@ -648,7 +677,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.nearby = best;
-    this.hud.prompt = best ? '[E] ENTER' : '';
+    this.hud.prompt = best ? ENTER_LABEL : '';
 
     if (best) {
       this.prompt.setVisible(true).setPosition(best.x, best.y - 40 + Math.sin(this.frame * 0.09) * 2);

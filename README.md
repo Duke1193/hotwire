@@ -28,6 +28,30 @@ npm run build
 | `E` | enter a car when the prompt shows; exit again at low speed |
 | `Space` | handbrake — hold it into a corner to slide |
 
+On a touch device the same actions come from a floating thumb stick on the
+left and pill buttons on the right — `ENTER` on foot, `GO` / `BRAKE` / `DRIFT`
+/ `EXIT` while driving. Keyboard and touch write into one `InputState`
+(`src/systems/Input.ts`), so nothing downstream knows which was used and touch
+is never faked as synthetic key events.
+
+## Phones
+
+Landscape is the intended orientation; portrait shows a `ROTATE TO PLAY`
+screen and gets out of the way as soon as the phone is turned. The canvas is
+rendered at up to 2× device pixels and scaled back down by CSS, so a retina
+screen stays sharp without paying for 3×. Safe-area insets are respected by
+both the DOM chrome and the on-screen controls, page scrolling, text selection,
+callouts and double-tap zoom are disabled over the play area, and the viewport
+is measured from a `100dvh` fixed element — plus a half-second poll, because
+Safari does not reliably fire an event when the address bar collapses.
+
+Phones also get a lighter simulation: 44 pedestrians instead of 82, 14 traffic
+cars instead of 22, a smaller active radius, fewer impact particles and skid
+marks stamped less often. The camera pulls back so the field of view roughly
+matches desktop rather than showing a magnified sliver of street. Subtle
+haptics fire on heavy collisions, pursuit escalation and completed jobs where
+the Vibration API exists (it does not on iOS, and is a no-op there).
+
 ## Multiplayer
 
 Optional. Copy `.env.example` to `.env` and fill in:
@@ -108,11 +132,30 @@ tappable while costing the renderer nothing.
 
 ## Analytics
 
-No vendor is wired up. Every interesting moment is emitted through
-`src/systems/Analytics.ts`, buffered on `window.getawayEvents`, and forwarded
-to `window.gtag` / `window.plausible` if either exists. The funnel worth
-watching: `game_started → vehicle_entered → pursuit_escaped` /
-`mission_completed → invite_clicked → second_player_joined`.
+PostHog, behind one abstraction in `src/systems/Analytics.ts`. Set
+`VITE_POSTHOG_KEY` and `VITE_POSTHOG_HOST` to enable it; without them no
+analytics client is loaded or even shipped, and events are still buffered on
+`window.getawayEvents` for local inspection.
+
+Every event carries the current context automatically: anonymous `player_id`,
+`room_id`, `nickname_set` (a boolean — the nickname itself is never sent),
+`device_type`, `mobile`, `touch`, `multiplayer`, `online_player_count`,
+`current_heat`, `score` and `session_duration`.
+
+`identify()` uses the anonymous UUID already in localStorage. There is no
+login, no email and no session recording. Browsers sending Do Not Track are
+opted out automatically, and `window.getawayAnalytics.optOut()` /
+`.optIn()` are available for a consent UI when one is needed.
+
+The funnel to watch:
+
+```
+game_started → vehicle_entered → pursuit_escaped | mission_completed
+             → invite_clicked → second_player_joined
+```
+
+Milestones (`first_vehicle_entered`, `first_drive`, `first_pursuit_escaped`,
+`first_mission_completed`) fire once per session so cohorts are easy to slice.
 
 ## Performance
 
@@ -121,5 +164,17 @@ incident and remote players — measures ~0.7 ms of scripting on a modern laptop
 against a 16.7 ms budget. Static geometry is baked into render textures, NPC
 updates fall off with distance, and nothing in the update loop allocates.
 
+## Audio
+
+Everything is synthesised at runtime with the Web Audio API — engine, tyre
+scrub, braking, light and heavy collisions, horns, pedestrian reactions, a
+proximity-driven police siren, a city ambience bed, and short original motifs
+for missions, HEAT, escapes, players joining and the Heat Run. There are no
+audio files in this repository and nothing is sampled. Audio starts on the
+first user gesture, as browsers require, and resumes when the tab returns.
+
+## Provenance
+
 All content is original. Genre mechanics only — no assets, names, maps, UI,
-audio or code from any existing game.
+audio or code from any existing game. See [IP_AUDIT.md](IP_AUDIT.md) for the
+full inventory, the repository sweep and the open name-clearance items.

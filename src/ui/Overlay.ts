@@ -1,6 +1,7 @@
 import './overlay.css';
 import type { NetStatus } from '../net/Transport';
 import type { RoomInfo } from '../net/Room';
+import { hasTouch } from '../util/device';
 
 export interface RosterEntry {
   name: string;
@@ -33,6 +34,7 @@ export class Overlay {
   private toasts: HTMLDivElement;
   private nudge: HTMLDivElement;
   private nudgeText: HTMLParagraphElement;
+  private rotate!: HTMLDivElement;
 
   constructor(muted: boolean) {
     this.root = document.createElement('div');
@@ -55,6 +57,17 @@ export class Overlay {
         <p id="gw-nudge-text">THAT WAS CLOSE.</p>
         <button id="gw-nudge-invite">INVITE A FRIEND</button>
         <button class="gw-x" id="gw-nudge-close">✕</button>
+      </div>
+      <div class="gw-rotate gw-hidden" id="gw-rotate">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="20" y="6" width="24" height="42" rx="4" stroke="#69d8ff" stroke-width="2.5" />
+          <rect x="27" y="10" width="10" height="2" rx="1" fill="#69d8ff" opacity="0.7" />
+          <circle cx="32" cy="43" r="1.8" fill="#69d8ff" opacity="0.7" />
+          <path d="M14 54a22 22 0 0 0 36 0" stroke="#39415a" stroke-width="2" stroke-linecap="round" />
+          <path d="M50 54l-5-4M50 54l-5 4" stroke="#39415a" stroke-width="2" stroke-linecap="round" />
+        </svg>
+        <p>ROTATE TO PLAY</p>
+        <small>GETAWAY RUNS IN LANDSCAPE</small>
       </div>
       <div class="gw-boot gw-hidden" id="gw-boot">
         <div class="gw-boot-inner">
@@ -83,6 +96,8 @@ export class Overlay {
     this.toasts = q('gw-toasts');
     this.nudge = q('gw-nudge');
     this.nudgeText = q('gw-nudge-text');
+    this.rotate = q('gw-rotate');
+    this.watchOrientation();
 
     q('gw-play').addEventListener('click', () => this.submit());
     this.input.addEventListener('keydown', (e) => {
@@ -103,6 +118,23 @@ export class Overlay {
       this.onSound?.(next);
     });
     this.setMuted(muted);
+  }
+
+  /**
+   * Landscape is the intended way to play on a phone. We cannot force it —
+   * the Screen Orientation lock API is not available to Safari here — so we
+   * ask, and get out of the way the moment the phone is turned.
+   */
+  private watchOrientation() {
+    if (!hasTouch) return;
+    const query = matchMedia('(orientation: portrait)');
+    const apply = () => this.rotate.classList.toggle('gw-hidden', !query.matches);
+    apply();
+    if (query.addEventListener) query.addEventListener('change', apply);
+    else query.addListener(apply);
+    window.addEventListener('orientationchange', () => window.setTimeout(apply, 150));
+    // Same belt-and-braces as the canvas sizing: Safari can miss the event.
+    window.setInterval(apply, 600);
   }
 
   // ------------------------------------------------------------ nickname

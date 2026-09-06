@@ -1,23 +1,16 @@
 import Phaser from 'phaser';
 import { Controls, Vehicle } from '../entities/Vehicle';
+import type { InputState } from './Input';
 import { angleDelta, clamp } from '../util/math';
 
-export interface InputState {
-  up: boolean;
-  down: boolean;
-  left: boolean;
-  right: boolean;
-  handbrake: boolean;
-}
-
-/** Translates raw key state into vehicle controls. */
+/** Passes the merged keyboard/touch state through to the car. */
 export class PlayerDriver {
   readonly controls: Controls = { throttle: 0, brake: 0, steer: 0, handbrake: false };
 
   control(input: InputState): Controls {
-    this.controls.throttle = input.up ? 1 : 0;
-    this.controls.brake = input.down ? 1 : 0;
-    this.controls.steer = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    this.controls.throttle = input.throttle;
+    this.controls.brake = input.brake;
+    this.controls.steer = input.steer;
     this.controls.handbrake = input.handbrake;
     return this.controls;
   }

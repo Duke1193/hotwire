@@ -44,7 +44,7 @@ export class HeatRun {
     if (this.phase === 'running') return;
     this.begin();
     this.net.sendEvent('hr', { kind: 'start', nickname: this.nickname } satisfies Wire);
-    track('heat_run_started', { room: this.net.room });
+    track('heat_run_started');
   }
 
   onNetEvent(type: string, payload: unknown, from: string) {
@@ -95,7 +95,7 @@ export class HeatRun {
       this.net.sendEvent('hr', { kind: 'win', nickname: this.nickname } satisfies Wire);
       this.finish(this.selfId);
       onWin(SCORE.heatRunWin);
-      track('heat_run_completed', { room: this.net.room, won: true });
+      track('heat_run_completed', { won: true });
     }
 
     this.describe();
@@ -129,7 +129,7 @@ export class HeatRun {
     const name = winnerId === this.selfId ? this.nickname.toUpperCase() : (this.names.get(winnerId) ?? 'PLAYER');
     this.title = `${name} ESCAPED`;
     this.subtitle = winnerId === this.selfId ? `+${SCORE.heatRunWin}` : 'HEAT RUN OVER';
-    if (winnerId !== this.selfId) track('heat_run_completed', { room: this.net.room, won: false });
+    if (winnerId !== this.selfId) track('heat_run_completed', { won: false });
   }
 
   private reset() {

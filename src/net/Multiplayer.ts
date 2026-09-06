@@ -1,5 +1,5 @@
 import { NET } from '../config';
-import { track, trackOnce } from '../systems/Analytics';
+import { Analytics, trackOnce } from '../systems/Analytics';
 import type { Identity } from '../systems/Identity';
 import { LoopbackTransport, NetStatus, PresenceInfo, Transport } from './Transport';
 import { SupabaseTransport } from './SupabaseTransport';
@@ -98,9 +98,9 @@ export class MultiplayerSystem {
         onPresence: (peers) => this.syncPresence(peers),
         onStatus: (status) => {
           this.status = status;
+          if (status === 'online') trackOnce('multiplayer_session_started');
         },
       });
-      track('room_joined', { room: this.room });
     } catch (err) {
       console.warn('[net] falling back to single player', err);
       this.transport = null;
@@ -196,7 +196,8 @@ export class MultiplayerSystem {
       this.onRosterChange?.();
       if (!this.everSawPeer) {
         this.everSawPeer = true;
-        trackOnce('second_player_joined', { room: this.room });
+        Analytics.setContext({ multiplayer: true });
+        trackOnce('second_player_joined');
       }
     }
     return peer;

@@ -212,6 +212,27 @@ export function buildTextures(scene: Phaser.Scene) {
     g.fillCircle(11, 11, 3.2);
   });
 
+  // on-screen thumb stick
+  make(scene, 'stick-base', 200, 200, (g) => {
+    g.fillStyle(0x0b0e14, 0.34);
+    g.fillCircle(100, 100, 96);
+    g.lineStyle(4, 0x69d8ff, 0.5);
+    g.strokeCircle(100, 100, 94);
+    g.lineStyle(2, 0xffffff, 0.12);
+    g.strokeCircle(100, 100, 62);
+  });
+
+  make(scene, 'stick-knob', 120, 120, (g) => {
+    g.fillStyle(0x69d8ff, 0.24);
+    g.fillCircle(60, 60, 56);
+    g.fillStyle(0xeef2fb, 0.9);
+    g.fillCircle(60, 60, 34);
+    g.fillStyle(0x0b0e14, 0.85);
+    g.fillCircle(60, 60, 26);
+    g.fillStyle(0x69d8ff, 0.9);
+    g.fillCircle(60, 60, 9);
+  });
+
   make(scene, 'shadow-soft', 64, 64, (g) => {
     g.fillStyle(0x000000, 0.16);
     g.fillCircle(32, 32, 30);

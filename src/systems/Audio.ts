@@ -1,94 +1,229 @@
 /**
- * All audio is synthesised at runtime with the Web Audio API — there are no
- * sound files in this project, so nothing here can be anyone else's work.
- * Everything is deliberately quiet: this is a bed, not a soundtrack.
+ * Every sound in Getaway is synthesised here at runtime with the Web Audio
+ * API. There are no audio files in this repository, nothing is sampled, and
+ * nothing imitates a specific cue from another game — the palette is built
+ * from oscillators, filtered noise and envelopes we wrote ourselves.
+ *
+ * The intent is the *feel* of an old top-down arcade driving game: a low city
+ * hum, a buzzy engine that tracks speed, harsh tyre scrub, a two-tone siren,
+ * and short bright blips for gameplay moments.
  */
 const STORE_KEY = 'getaway.muted';
+
+export type Cue =
+  | 'missionAccepted'
+  | 'checkpoint'
+  | 'missionDone'
+  | 'missionFailed'
+  | 'heat'
+  | 'escaped'
+  | 'playerJoined'
+  | 'heatRunStart'
+  | 'heatRunWin';
+
+interface Note {
+  f: number;
+  /** seconds from the start of the cue */
+  at: number;
+  len: number;
+  type?: OscillatorType;
+  gain?: number;
+}
+
+/** Short original motifs. Deliberately plain intervals, no borrowed melodies. */
+const CUES: Record<Cue, { notes: Note[]; volume: number }> = {
+  missionAccepted: {
+    volume: 0.07,
+    notes: [
+      { f: 523, at: 0, len: 0.09 },
+      { f: 784, at: 0.09, len: 0.13 },
+    ],
+  },
+  checkpoint: { volume: 0.06, notes: [{ f: 1046, at: 0, len: 0.07 }] },
+  missionDone: {
+    volume: 0.08,
+    notes: [
+      { f: 523, at: 0, len: 0.09 },
+      { f: 659, at: 0.09, len: 0.09 },
+      { f: 880, at: 0.18, len: 0.2 },
+    ],
+  },
+  missionFailed: {
+    volume: 0.07,
+    notes: [
+      { f: 392, at: 0, len: 0.15, type: 'square' },
+      { f: 262, at: 0.14, len: 0.26, type: 'square' },
+    ],
+  },
+  heat: {
+    volume: 0.09,
+    notes: [
+      { f: 116, at: 0, len: 0.16, type: 'sawtooth' },
+      { f: 116, at: 0.2, len: 0.22, type: 'sawtooth' },
+    ],
+  },
+  escaped: {
+    volume: 0.07,
+    notes: [
+      { f: 784, at: 0, len: 0.14 },
+      { f: 523, at: 0.13, len: 0.34 },
+    ],
+  },
+  playerJoined: {
+    volume: 0.06,
+    notes: [
+      { f: 660, at: 0, len: 0.06, type: 'sine' },
+      { f: 990, at: 0.07, len: 0.1, type: 'sine' },
+    ],
+  },
+  heatRunStart: {
+    volume: 0.08,
+    notes: [
+      { f: 349, at: 0, len: 0.1, type: 'square' },
+      { f: 523, at: 0.1, len: 0.1, type: 'square' },
+      { f: 698, at: 0.2, len: 0.22, type: 'square' },
+    ],
+  },
+  heatRunWin: {
+    volume: 0.09,
+    notes: [
+      { f: 523, at: 0, len: 0.09 },
+      { f: 659, at: 0.09, len: 0.09 },
+      { f: 784, at: 0.18, len: 0.09 },
+      { f: 1046, at: 0.27, len: 0.28 },
+    ],
+  },
+};
 
 export class AudioBus {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
-  private ambientGain: GainNode | null = null;
+
   private engineOsc: OscillatorNode | null = null;
+  private engineSub: OscillatorNode | null = null;
   private engineGain: GainNode | null = null;
   private engineFilter: BiquadFilterNode | null = null;
+
+  private tyreGain: GainNode | null = null;
+  private tyreFilter: BiquadFilterNode | null = null;
+
   private sirenOsc: OscillatorNode | null = null;
   private sirenGain: GainNode | null = null;
   private sirenLfo: OscillatorNode | null = null;
+  private sirenFilter: BiquadFilterNode | null = null;
+
   private noise: AudioBuffer | null = null;
   private lastShout = 0;
   private lastHorn = 0;
+  private lastSqueal = 0;
+  private ambientHornAt = 0;
 
   muted = localStorage.getItem(STORE_KEY) === '1';
 
-  /** Must be called from a user gesture (the PLAY button). */
+  /** Must be called from a user gesture — browsers will not start audio otherwise. */
   start() {
-    if (this.ctx) return;
-    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (this.ctx) {
+      void this.ctx.resume();
+      return;
+    }
+    const Ctor =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return;
     try {
       this.ctx = new Ctor();
     } catch {
       return;
     }
+
     const ctx = this.ctx;
     this.master = ctx.createGain();
     this.master.gain.value = this.muted ? 0 : 0.5;
     this.master.connect(ctx.destination);
 
     this.noise = this.makeNoise(ctx, 2);
-    this.startAmbience();
+    this.buildAmbience();
     this.buildEngine();
+    this.buildTyres();
     this.buildSiren();
+
+    // iOS suspends the context whenever the tab goes away.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) void this.ctx?.resume();
+    });
   }
 
   setMuted(muted: boolean) {
     this.muted = muted;
     localStorage.setItem(STORE_KEY, muted ? '1' : '0');
-    if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(muted ? 0 : 0.5, this.ctx.currentTime, 0.05);
-    }
+    if (this.master && this.ctx) this.master.gain.setTargetAtTime(muted ? 0 : 0.5, this.ctx.currentTime, 0.05);
+    if (!muted) void this.ctx?.resume();
   }
+
+  // ------------------------------------------------------------- graph
 
   private makeNoise(ctx: AudioContext, seconds: number): AudioBuffer {
     const buf = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
     const data = buf.getChannelData(0);
     let last = 0;
     for (let i = 0; i < data.length; i++) {
-      // brown-ish noise reads as distant city rather than hiss
+      // brown-ish noise reads as a distant city rather than hiss
       last = (last + Math.random() * 2 - 1) * 0.5;
       data[i] = last;
     }
     return buf;
   }
 
-  /** Low rumble of a city that is always somewhere over there. */
-  private startAmbience() {
-    const ctx = this.ctx!;
-    const src = ctx.createBufferSource();
+  private loopNoise(): AudioBufferSourceNode {
+    const src = this.ctx!.createBufferSource();
     src.buffer = this.noise;
     src.loop = true;
+    src.start();
+    return src;
+  }
+
+  private buildAmbience() {
+    const ctx = this.ctx!;
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 340;
-    this.ambientGain = ctx.createGain();
-    this.ambientGain.gain.value = 0.16;
-    src.connect(filter).connect(this.ambientGain).connect(this.master!);
-    src.start();
+    const gain = ctx.createGain();
+    gain.gain.value = 0.16;
+    this.loopNoise().connect(filter).connect(gain).connect(this.master!);
   }
 
   private buildEngine() {
     const ctx = this.ctx!;
     this.engineOsc = ctx.createOscillator();
     this.engineOsc.type = 'sawtooth';
-    this.engineOsc.frequency.value = 60;
+    this.engineOsc.frequency.value = 58;
+    this.engineSub = ctx.createOscillator();
+    this.engineSub.type = 'square';
+    this.engineSub.frequency.value = 29;
+
     this.engineFilter = ctx.createBiquadFilter();
     this.engineFilter.type = 'lowpass';
     this.engineFilter.frequency.value = 420;
+    this.engineFilter.Q.value = 3.5;
+
     this.engineGain = ctx.createGain();
     this.engineGain.gain.value = 0;
-    this.engineOsc.connect(this.engineFilter).connect(this.engineGain).connect(this.master!);
+
+    this.engineOsc.connect(this.engineFilter);
+    this.engineSub.connect(this.engineFilter);
+    this.engineFilter.connect(this.engineGain).connect(this.master!);
     this.engineOsc.start();
+    this.engineSub.start();
+  }
+
+  private buildTyres() {
+    const ctx = this.ctx!;
+    this.tyreFilter = ctx.createBiquadFilter();
+    this.tyreFilter.type = 'bandpass';
+    this.tyreFilter.frequency.value = 1800;
+    this.tyreFilter.Q.value = 7;
+    this.tyreGain = ctx.createGain();
+    this.tyreGain.gain.value = 0;
+    this.loopNoise().connect(this.tyreFilter).connect(this.tyreGain).connect(this.master!);
   }
 
   private buildSiren() {
@@ -98,35 +233,63 @@ export class AudioBus {
     this.sirenOsc.frequency.value = 640;
     this.sirenGain = ctx.createGain();
     this.sirenGain.gain.value = 0;
+
     this.sirenLfo = ctx.createOscillator();
+    this.sirenLfo.type = 'triangle';
     this.sirenLfo.frequency.value = 0.9;
-    const lfoDepth = ctx.createGain();
-    lfoDepth.gain.value = 150;
-    this.sirenLfo.connect(lfoDepth).connect(this.sirenOsc.frequency);
-    const soften = ctx.createBiquadFilter();
-    soften.type = 'lowpass';
-    soften.frequency.value = 1400;
-    this.sirenOsc.connect(soften).connect(this.sirenGain).connect(this.master!);
+    const depth = ctx.createGain();
+    depth.gain.value = 150;
+    this.sirenLfo.connect(depth).connect(this.sirenOsc.frequency);
+
+    this.sirenFilter = ctx.createBiquadFilter();
+    this.sirenFilter.type = 'lowpass';
+    this.sirenFilter.frequency.value = 900;
+
+    this.sirenOsc.connect(this.sirenFilter).connect(this.sirenGain).connect(this.master!);
     this.sirenOsc.start();
     this.sirenLfo.start();
   }
 
-  /** Engine note follows the car; 0 when on foot. */
-  engine(speedRatio: number, throttle: number) {
+  // -------------------------------------------------------- continuous
+
+  /** Engine note follows speed; a small idle floor keeps a parked car alive. */
+  engine(speedRatio: number, throttle: number, seated: boolean) {
     if (!this.ctx || !this.engineOsc) return;
     const t = this.ctx.currentTime;
-    const target = speedRatio > 0.001 || throttle > 0 ? 0.05 + throttle * 0.05 : 0;
-    this.engineGain!.gain.setTargetAtTime(target, t, 0.08);
-    this.engineOsc.frequency.setTargetAtTime(52 + speedRatio * 150, t, 0.09);
-    this.engineFilter!.frequency.setTargetAtTime(320 + speedRatio * 900, t, 0.12);
+    const target = seated ? 0.028 + throttle * 0.045 + speedRatio * 0.02 : 0;
+    this.engineGain!.gain.setTargetAtTime(target, t, 0.09);
+    const rpm = 52 + speedRatio * 170 + throttle * 14;
+    this.engineOsc.frequency.setTargetAtTime(rpm, t, 0.08);
+    this.engineSub!.frequency.setTargetAtTime(rpm * 0.5, t, 0.12);
+    this.engineFilter!.frequency.setTargetAtTime(320 + speedRatio * 1400, t, 0.12);
   }
 
-  /** Siren volume tracks how close the nearest patrol is. */
+  /** Tyre scrub while sliding; `slip` is 0..1. */
+  tyres(slip: number) {
+    if (!this.ctx || !this.tyreGain) return;
+    const t = this.ctx.currentTime;
+    this.tyreGain.gain.setTargetAtTime(Math.min(0.08, slip * 0.09), t, 0.06);
+    this.tyreFilter!.frequency.setTargetAtTime(1500 + slip * 1700, t, 0.08);
+  }
+
+  /** Siren volume and urgency track how close the nearest patrol is. */
   siren(active: boolean, closeness: number) {
     if (!this.ctx || !this.sirenGain) return;
-    const target = active ? 0.02 + closeness * 0.05 : 0;
-    this.sirenGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.25);
+    const t = this.ctx.currentTime;
+    this.sirenGain.gain.setTargetAtTime(active ? 0.018 + closeness * 0.05 : 0, t, 0.25);
+    this.sirenLfo!.frequency.setTargetAtTime(0.75 + closeness * 0.85, t, 0.3);
+    this.sirenFilter!.frequency.setTargetAtTime(700 + closeness * 1600, t, 0.3);
   }
+
+  /** Occasional far-off horn so the city keeps talking when nothing happens. */
+  ambience(nowMs: number) {
+    if (!this.ctx) return;
+    if (nowMs < this.ambientHornAt) return;
+    this.ambientHornAt = nowMs + 12000 + Math.random() * 22000;
+    this.blip(300 + Math.random() * 90, 0.3, 0.012, Math.random() * 2 - 1, 'square', 380);
+  }
+
+  // ---------------------------------------------------------- one-shots
 
   horn(pan = 0, distance = 0) {
     const now = performance.now();
@@ -135,21 +298,18 @@ export class AudioBus {
     this.blip(392, 0.22, 0.05 * falloff(distance), pan, 'square', 494);
   }
 
+  brake(pan = 0) {
+    const now = performance.now();
+    if (now - this.lastSqueal < 700) return;
+    this.lastSqueal = now;
+    this.burst(0.22, 0.05, pan, 2400, 9);
+  }
+
   crash(strength: number, pan = 0) {
-    if (!this.ctx) return;
-    const ctx = this.ctx;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.value = 260 + strength * 40;
-    filter.Q.value = 0.8;
-    const gain = ctx.createGain();
-    const vol = Math.min(0.32, 0.05 + strength * 0.035);
-    gain.gain.setValueAtTime(vol, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.34);
-    src.connect(filter).connect(gain).connect(this.panner(pan));
-    src.start(0, Math.random() * 1.5, 0.4);
+    // light knocks are duller and quieter than a real hit
+    const heavy = strength > 6;
+    this.burst(heavy ? 0.4 : 0.22, Math.min(0.3, 0.045 + strength * 0.032), pan, heavy ? 220 : 420, heavy ? 0.7 : 1.4);
+    if (heavy) this.blip(70, 0.26, 0.07, pan, 'sawtooth');
   }
 
   shout(pan = 0, distance = 0) {
@@ -159,20 +319,56 @@ export class AudioBus {
     this.blip(520 + Math.random() * 180, 0.16, 0.035 * falloff(distance), pan, 'triangle');
   }
 
-  private blip(freq: number, seconds: number, volume: number, pan: number, type: OscillatorType, second?: number) {
+  cue(name: Cue) {
+    const spec = CUES[name];
+    if (!spec || !this.ctx) return;
+    for (const note of spec.notes) {
+      this.blip(note.f, note.len, (note.gain ?? 1) * spec.volume, 0, note.type ?? 'triangle', undefined, note.at);
+    }
+  }
+
+  // ------------------------------------------------------------ helpers
+
+  private burst(seconds: number, volume: number, pan: number, freq: number, q: number) {
+    if (!this.ctx || volume <= 0.001) return;
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = freq;
+    filter.Q.value = q;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(volume, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + seconds);
+    src.connect(filter).connect(gain).connect(this.panner(pan));
+    src.start(0, Math.random() * 1.5, seconds + 0.05);
+  }
+
+  private blip(
+    freq: number,
+    seconds: number,
+    volume: number,
+    pan: number,
+    type: OscillatorType,
+    second?: number,
+    delay = 0,
+  ) {
     if (!this.ctx || volume <= 0.001) return;
     const ctx = this.ctx;
     const out = this.panner(pan);
+    const at = ctx.currentTime + delay;
     const play = (f: number) => {
       const osc = ctx.createOscillator();
       osc.type = type;
       osc.frequency.value = f;
       const gain = ctx.createGain();
-      gain.gain.setValueAtTime(volume, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + seconds);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(volume, at + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + seconds);
       osc.connect(gain).connect(out);
-      osc.start();
-      osc.stop(ctx.currentTime + seconds + 0.02);
+      osc.start(at);
+      osc.stop(at + seconds + 0.03);
     };
     play(freq);
     if (second) play(second);
