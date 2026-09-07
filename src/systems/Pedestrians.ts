@@ -25,11 +25,16 @@ const enum State {
   Stumble,
   /** The beat between noticing and running. */
   Startled,
+  /** On the ground and staying there. */
+  Down,
 }
 
 interface Ped {
   sprite: Phaser.GameObjects.Image;
   shadow: Phaser.GameObjects.Image;
+  /** Texture base for this jacket: `ped-3` gives `ped-3-a`, `-b`, `-down`. */
+  skin: string;
+  health: number;
   node: number;
   from: number;
   state: State;
@@ -43,6 +48,8 @@ interface Ped {
   fleeMs: number;
   /** Frames skipped while far away, so movement stays consistent. */
   slow: boolean;
+  /** Which walk frame is currently on the sprite, so we only swap on change. */
+  frame: number;
 }
 
 const NEAR = 980;
@@ -59,6 +66,10 @@ export class Pedestrians {
 
   /** Called when someone visibly panics near the camera. */
   onShout: ((x: number, y: number) => void) | null = null;
+  /** Someone went down. `killed` is false for a knock that they get up from. */
+  onDown: ((x: number, y: number, killed: boolean) => void) | null = null;
+  /** Rare, harmless street noise. */
+  onGag: ((x: number, y: number) => void) | null = null;
 
   constructor(private scene: Phaser.Scene, private world: World, focus: Phaser.Math.Vector2) {
     for (let i = 0; i < PEDS.count; i++) {
@@ -75,6 +86,8 @@ export class Pedestrians {
       this.peds.push({
         sprite,
         shadow,
+        skin: key,
+        health: PEDS.health,
         node,
         from: node,
         state: State.Walk,
@@ -86,6 +99,7 @@ export class Pedestrians {
         ky: 0,
         fleeMs: 2000,
         slow: false,
+        frame: 0,
       });
       this.retarget(this.peds[this.peds.length - 1]);
     }
@@ -93,6 +107,28 @@ export class Pedestrians {
 
   get count() {
     return this.peds.length;
+  }
+
+  /**
+   * A bullet passed through here. Returns true if it found somebody, so the
+   * caller can retire the round.
+   */
+  hitAt(x: number, y: number, radius: number, damage: number): boolean {
+    const r2 = radius * radius;
+    for (const ped of this.peds) {
+      if (ped.state === State.Down) continue;
+      const dx = ped.sprite.x - x;
+      const dy = ped.sprite.y - y;
+      if (dx * dx + dy * dy > r2) continue;
+      ped.health -= damage;
+      if (ped.health <= 0) this.putDown(ped, true);
+      else {
+        this.panic(ped, x, y, 4200);
+        this.onShout?.(ped.sprite.x, ped.sprite.y);
+      }
+      return true;
+    }
+    return false;
   }
 
   /** Scatter everyone near a point — used by crashes and ambient incidents. */
@@ -115,7 +151,7 @@ export class Pedestrians {
       const dy = ped.sprite.y - focus.y;
       const dist2 = dx * dx + dy * dy;
 
-      if (dist2 > PEDS.despawn * PEDS.despawn) {
+      if (dist2 > PEDS.despawn * PEDS.despawn && ped.state !== State.Down) {
         this.recycle(ped, focus);
         continue;
       }
@@ -138,6 +174,13 @@ export class Pedestrians {
     if (hazards) this.checkHazards(ped, hazards);
 
     switch (ped.state) {
+      case State.Down: {
+        // Bodies stay put and stay visible, then fade out and rejoin the crowd
+        // somewhere else. Nothing else about them updates.
+        if (ped.timer <= 1200) ped.sprite.setAlpha(Math.max(0, ped.timer / 1200));
+        if (ped.timer <= 0) this.revive(ped);
+        return;
+      }
       case State.Stumble: {
         ped.sprite.x += ped.kx * dt;
         ped.sprite.y += ped.ky * dt;
@@ -170,6 +213,9 @@ export class Pedestrians {
       default:
         break;
     }
+
+    // A rare, entirely pointless noise from somewhere on the pavement.
+    if (Math.random() < 0.0000055 * dtMs) this.onGag?.(ped.sprite.x, ped.sprite.y);
 
     if (
       ped.state === State.Wait ||
@@ -219,16 +265,54 @@ export class Pedestrians {
     const running = ped.state === State.Flee;
     ped.bob += moved * (running ? 0.4 : ped.state === State.Cross ? 0.3 : 0.22);
 
-    let stretch = 1 + Math.sin(ped.bob) * (running ? 0.14 : 0.07);
+    // Arms and legs trade places on the beat. Two frames is all a figure this
+    // size needs to read as walking rather than sliding.
+    const swing = moved > 0.02 ? (Math.sin(ped.bob * 0.9) > 0 ? 1 : 2) : 0;
+    if (swing !== ped.frame) {
+      ped.frame = swing;
+      const key = swing === 0 ? ped.skin : `${ped.skin}-${swing === 1 ? 'a' : 'b'}`;
+      ped.sprite.setTexture(key);
+      ped.shadow.setTexture(key);
+    }
+
+    let stretch = 1 + Math.sin(ped.bob) * (running ? 0.1 : 0.05);
     if (ped.state === State.Startled) {
       // a short, sharp flinch out of the walk cycle
-      const pop = 1 + Math.max(0, ped.timer / 240) * 0.22;
-      stretch = pop;
+      stretch = 1 + Math.max(0, ped.timer / 240) * 0.22;
     }
 
     ped.sprite.setRotation(ped.facing).setScale(SCALE * stretch, SCALE / stretch);
     ped.sprite.setAlpha(running ? 1 : 0.96);
     ped.shadow.setPosition(ped.sprite.x + 3, ped.sprite.y + 5).setRotation(ped.facing);
+  }
+
+  /**
+   * Puts someone on the floor. `killed` distinguishes a body that stays from
+   * a knock they get up from — both look the same for the first moment.
+   */
+  private putDown(ped: Ped, killed: boolean) {
+    if (ped.state === State.Down) return;
+    ped.state = State.Down;
+    ped.timer = killed ? PEDS.downMs : 2600;
+    ped.frame = -1;
+    ped.sprite.setTexture(`${ped.skin}-down`).setScale(SCALE).setAlpha(1);
+    ped.shadow.setTexture(`${ped.skin}-down`).setAlpha(0.2);
+    this.onDown?.(ped.sprite.x, ped.sprite.y, killed);
+    this.onShout?.(ped.sprite.x, ped.sprite.y);
+    // The street notices.
+    this.shock(ped.sprite.x, ped.sprite.y, 220);
+  }
+
+  /** A body's time is up: fade out, then rejoin the crowd somewhere else. */
+  private revive(ped: Ped) {
+    ped.health = PEDS.health;
+    ped.frame = -1;
+    ped.sprite.setAlpha(0.96);
+    ped.shadow.setAlpha(0.26);
+    ped.sprite.setTexture(ped.skin);
+    ped.shadow.setTexture(ped.skin);
+    ped.state = State.Walk;
+    ped.timer = 0;
   }
 
   /** Reached a waypoint: pick the next one, maybe loiter, maybe cross. */
@@ -285,13 +369,19 @@ export class Pedestrians {
       const d2 = dx * dx + dy * dy;
 
       if (d2 < 22 * 22 && h.speed > 1.2) {
-        // clipped by a car: knocked aside, then bolts
+        // A glancing knock spins someone aside; anything at speed puts them
+        // down and leaves them there.
+        if (h.speed >= PEDS.fatalSpeed) {
+          this.putDown(ped, true);
+          return;
+        }
         const d = Math.max(0.001, Math.sqrt(d2));
         ped.state = State.Stumble;
         ped.timer = 420;
         ped.kx = (dx / d) * clamp(h.speed * 0.5, 1.6, 5);
         ped.ky = (dy / d) * clamp(h.speed * 0.5, 1.6, 5);
         this.onShout?.(ped.sprite.x, ped.sprite.y);
+        this.onDown?.(ped.sprite.x, ped.sprite.y, false);
         return;
       }
 
@@ -315,7 +405,7 @@ export class Pedestrians {
   }
 
   private panic(ped: Ped, fromX: number, fromY: number, ms: number) {
-    if (ped.state === State.Stumble || ped.state === State.Startled) return;
+    if (ped.state === State.Stumble || ped.state === State.Startled || ped.state === State.Down) return;
     const first = ped.state !== State.Flee;
     ped.fleeMs = Math.max(ped.timer, ms);
 
@@ -369,6 +459,10 @@ export class Pedestrians {
     ped.timer = 0;
     ped.kx = 0;
     ped.ky = 0;
+    ped.health = PEDS.health;
+    ped.frame = -1;
+    ped.sprite.setAlpha(0.96).setTexture(ped.skin);
+    ped.shadow.setAlpha(0.26).setTexture(ped.skin);
     this.retarget(ped);
   }
 }

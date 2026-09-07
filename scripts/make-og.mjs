@@ -58,26 +58,36 @@ const FONT = {
   A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
   W: ['10001', '10001', '10001', '10101', '10101', '11011', '10001'],
   Y: ['10001', '10001', '01010', '00100', '00100', '00100', '00100'],
+  C: ['01110', '10001', '10000', '10000', '10000', '10001', '01110'],
+  I: ['11111', '00100', '00100', '00100', '00100', '00100', '11111'],
 };
 
-const word = 'GETAWAY';
-const scale = 17;
-const gap = scale * 2;
-const textW = word.length * 5 * scale + (word.length - 1) * gap;
-let cx = Math.round((W - textW) / 2);
-const cy = 92;
-for (const ch of word) {
-  const glyph = FONT[ch];
-  for (let r = 0; r < 7; r++) {
-    for (let c = 0; c < 5; c++) {
-      if (glyph[r][c] === '1') rect(cx + c * scale, cy + r * scale, scale, scale, [238, 242, 251]);
+// Two stacked lines of block capitals: the name reads at thumbnail size and
+// the letterforms are drawn here, not set in anybody's typeface.
+const line = (word, scale, cy, colour) => {
+  const gap = Math.round(scale * 2);
+  const textW = word.length * 5 * scale + (word.length - 1) * gap;
+  let cx = Math.round((W - textW) / 2);
+  for (const ch of word) {
+    const glyph = FONT[ch];
+    for (let r = 0; r < 7; r++) {
+      for (let c = 0; c < 5; c++) {
+        if (glyph[r][c] === '1') rect(cx + c * scale, cy + r * scale, scale, scale, colour);
+      }
     }
+    cx += 5 * scale + gap;
   }
-  cx += 5 * scale + gap;
-}
+  return textW;
+};
+
+const topScale = 17;
+const topW = line('GETAWAY', topScale, 66, [238, 242, 251]);
+const cityScale = 15;
+const cityW = line('CITY', cityScale, 66 + 7 * topScale + 30, [105, 216, 255]);
+void cityW;
 
 // underline in the UI accent
-rect(Math.round((W - textW) / 2), cy + 7 * scale + 26, textW, 7, [105, 216, 255]);
+rect(Math.round((W - topW) / 2), 66 + 7 * topScale + 30 + 7 * cityScale + 24, topW, 7, [105, 216, 255]);
 
 const raw = Buffer.alloc(H * (W * 3 + 1));
 for (let y = 0; y < H; y++) {

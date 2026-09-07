@@ -27,9 +27,12 @@ export class CameraRig {
     // followOffset is subtracted from the target, so negate to look ahead
     this.cam.setFollowOffset(-this.lead.x, -this.lead.y);
 
-    const base = driving ? lerp(CAM.zoomCar, CAM.zoomFast, clamp(speedRatio, 0, 1)) : CAM.zoomFoot;
+    // Squared so the pull-back arrives with the speed rather than with the
+    // throttle: crawling in a car still feels like a car, flat out feels open.
+    const pull = clamp(speedRatio, 0, 1) ** 1.4;
+    const base = driving ? lerp(CAM.zoomCar, CAM.zoomFast, pull) : CAM.zoomFoot;
     const target = base * RENDER_SCALE;
-    this.zoom = lerp(this.zoom, target, clamp(0.035 * dtScale, 0, 1));
+    this.zoom = lerp(this.zoom, target, clamp(CAM.zoomLerp * dtScale, 0, 1));
     this.cam.setZoom(this.zoom);
   }
 }

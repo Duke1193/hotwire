@@ -123,7 +123,8 @@ export class Traffic {
 
       const gap = this.gapAhead(v, obstacles);
 
-      let desired = car.reckless || car.boostMs > 0 ? TRAFFIC.recklessSpeed : TRAFFIC.maxSpeed;
+      // Class matters on the road too: a lorry never keeps up with a hatchback.
+      let desired = (car.reckless || car.boostMs > 0 ? TRAFFIC.recklessSpeed : TRAFFIC.maxSpeed) * v.skin.speed;
       if (car.yieldMs > 0) desired *= 0.35;
       if (car.brakeMs > 0) desired = 0;
 

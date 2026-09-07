@@ -109,11 +109,13 @@ export class UIScene extends Phaser.Scene {
 
     this.nav = this.add.image(0, 0, 'wedge').setVisible(false).setScale(S);
 
-    this.title = this.add.text(0, 0, 'GETAWAY', { fontFamily: MONO, fontSize: px(46), color: '#f2f5fb' }).setOrigin(0.5);
+    this.title = this.add
+      .text(0, 0, 'GETAWAY CITY', { fontFamily: MONO, fontSize: px(38), color: '#f2f5fb' })
+      .setOrigin(0.5);
     this.title.setLetterSpacing?.(10 * S);
 
     // Sits under every HUD element and over the world.
-    this.vignette = this.add.image(0, 0, 'vignette').setOrigin(0, 0).setDepth(-5).setAlpha(0.85);
+    this.vignette = this.add.image(0, 0, 'vignette').setOrigin(0, 0).setDepth(-5).setAlpha(0.7);
 
     this.touch = new TouchControls(this, RENDER_SCALE);
 

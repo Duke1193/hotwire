@@ -116,6 +116,11 @@ export class Combat {
   onShot: ((wire: ShotWire) => void) | null = null;
   onHit: ((targetId: string, damage: number) => void) | null = null;
   onNoise: ((x: number, y: number, weapon: WeaponId) => void) | null = null;
+  /**
+   * Anything in the world that is not a networked player. Returns true if the
+   * round found something, so it stops there. Only our own shots ask.
+   */
+  onWorldHit: ((x: number, y: number, damage: number) => boolean) | null = null;
 
   private pool: Bullet[] = [];
   private nextShotAt = 0;
@@ -232,6 +237,10 @@ export class Combat {
       }
 
       if (!b.mine) continue;
+      if (this.onWorldHit?.(sprite.x, sprite.y, b.damage)) {
+        this.retire(b);
+        continue;
+      }
       for (const t of targets) {
         const dx = t.x - sprite.x;
         const dy = t.y - sprite.y;

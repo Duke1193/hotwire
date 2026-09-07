@@ -29,6 +29,7 @@ export type GameEvent =
   | 'heat_level_changed'
   | 'pursuit_escaped'
   | 'first_pursuit_escaped'
+  | 'first_civilian_down'
   | 'invite_clicked'
   | 'invite_shared'
   | 'invite_copied'

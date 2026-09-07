@@ -60,6 +60,8 @@ export class Overlay {
   onCrewChange: ((name: string, tag: string) => void) | null = null;
   onCrewLeave: (() => void) | null = null;
   onCopyCode: (() => void) | null = null;
+  onVoice: ((enabled: boolean) => void) | null = null;
+  onGags: ((enabled: boolean) => void) | null = null;
   onScoreboardOpen: (() => void) | null = null;
   onSettingsOpen: (() => void) | null = null;
 
@@ -193,7 +195,7 @@ export class Overlay {
 
       <div class="gw-boot gw-hidden" id="gw-boot">
         <div class="gw-boot-inner" id="gw-boot-new">
-          <h1>GETAWAY</h1>
+          <h1>GETAWAY<span>CITY</span></h1>
           <p class="gw-sub">enter the city.</p>
           <p class="gw-join gw-hidden" id="gw-joining"></p>
           <label for="gw-name">NICKNAME OR @X HANDLE</label>
@@ -204,7 +206,7 @@ export class Overlay {
           <p class="gw-fine">no account · anonymous analytics · <button class="gw-link" data-privacy>PRIVACY</button></p>
         </div>
         <div class="gw-boot-inner gw-hidden" id="gw-boot-resume">
-          <h1>GETAWAY</h1>
+          <h1>GETAWAY<span>CITY</span></h1>
           <p class="gw-sub" id="gw-welcome">welcome back.</p>
           <div class="gw-stats">
             <div><span id="gw-resume-score">0</span><small>SCORE</small></div>
@@ -252,6 +254,9 @@ export class Overlay {
 
           <section><h3>AUDIO</h3>
             <div class="gw-toggle-row"><span>SOUND</span><button id="gw-audio-toggle" class="gw-toggle" aria-pressed="true">ON</button></div>
+            <div class="gw-toggle-row"><span>DISPATCH VOICE</span><button id="gw-voice-toggle" class="gw-toggle" aria-pressed="true">ON</button></div>
+            <div class="gw-toggle-row"><span>STREET GAGS</span><button id="gw-gag-toggle" class="gw-toggle" aria-pressed="true">ON</button></div>
+            <p class="gw-fine">Dispatch reads mission lines aloud with your browser's own speech voice. Street gags are the occasional daft noise from the pavement. Both are flavour only.</p>
           </section>
 
           <section id="gw-privacy-section"><h3>PRIVACY</h3>
@@ -349,6 +354,12 @@ export class Overlay {
 
     this.soundBtn.addEventListener('click', () => this.toggleSound());
     this.q('gw-audio-toggle').addEventListener('click', () => this.toggleSound());
+    this.q('gw-voice-toggle').addEventListener('click', () => {
+      this.onVoice?.(this.flipToggle('gw-voice-toggle'));
+    });
+    this.q('gw-gag-toggle').addEventListener('click', () => {
+      this.onGags?.(this.flipToggle('gw-gag-toggle'));
+    });
 
     this.q('gw-settings-btn').addEventListener('click', () => this.openSettings());
     this.settings.addEventListener('click', (e) => {
@@ -665,6 +676,24 @@ export class Overlay {
     this.applyObjective();
   }
 
+  /** Puts the audio switches where the stored preferences already are. */
+  setAudioPrefs(voice: boolean, gags: boolean) {
+    this.setToggle('gw-voice-toggle', voice);
+    this.setToggle('gw-gag-toggle', gags);
+  }
+
+  private setToggle(id: string, on: boolean) {
+    const btn = this.q<HTMLButtonElement>(id);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.textContent = on ? 'ON' : 'OFF';
+  }
+
+  private flipToggle(id: string): boolean {
+    const on = this.q<HTMLButtonElement>(id).getAttribute('aria-pressed') !== 'true';
+    this.setToggle(id, on);
+    return on;
+  }
+
   setTopInset(px: number) {
     this.root.style.setProperty('--gw-hud-top', `${px}px`);
   }
@@ -717,7 +746,7 @@ export class Overlay {
     } else {
       button.textContent = 'HOW TO GO FULLSCREEN';
       hint.textContent =
-        'Add Getaway to your Home Screen to play without Safari bars: Share → Add to Home Screen → open it from there.';
+        'Add Getaway City to your Home Screen to play without Safari bars: Share → Add to Home Screen → open it from there.';
     }
   }
 

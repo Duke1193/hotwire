@@ -9,6 +9,7 @@
  * and short bright blips for gameplay moments.
  */
 const STORE_KEY = 'getaway.muted';
+const GAG_KEY = 'getaway.gags';
 
 export type Cue =
   | 'missionAccepted'
@@ -23,7 +24,8 @@ export type Cue =
   | 'district'
   | 'pickup'
   | 'down'
-  | 'wrecked';
+  | 'wrecked'
+  | 'ignite';
 
 interface Note {
   f: number;
@@ -109,6 +111,13 @@ const CUES: Record<Cue, { notes: Note[]; volume: number }> = {
       { f: 147, at: 0.15, len: 0.34, type: 'sawtooth' },
     ],
   },
+  ignite: {
+    volume: 0.09,
+    notes: [
+      { f: 92, at: 0, len: 0.3, type: 'sawtooth' },
+      { f: 58, at: 0.12, len: 0.34, type: 'sawtooth', gain: 0.8 },
+    ],
+  },
   wrecked: {
     volume: 0.09,
     notes: [
@@ -147,11 +156,16 @@ export class AudioBus {
 
   private noise: AudioBuffer | null = null;
   private lastShout = 0;
+  private lastChatter = 0;
+  private lastGag = 0;
+  private lastCrackle = 0;
   private lastHorn = 0;
   private lastSqueal = 0;
   private ambientHornAt = 0;
 
   muted = localStorage.getItem(STORE_KEY) === '1';
+  /** The joke layer. On by default, off in one tap, remembered. */
+  gags = localStorage.getItem(GAG_KEY) !== '0';
 
   /** Must be called from a user gesture — browsers will not start audio otherwise. */
   start() {
@@ -183,6 +197,11 @@ export class AudioBus {
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) void this.ctx?.resume();
     });
+  }
+
+  setGags(on: boolean) {
+    this.gags = on;
+    localStorage.setItem(GAG_KEY, on ? '1' : '0');
   }
 
   setMuted(muted: boolean) {
@@ -363,6 +382,140 @@ export class AudioBus {
     }
     this.burst(0.1, 0.055 * near, pan, 1250, 2);
     this.blip(140, 0.07, 0.035 * near, pan, 'square');
+  }
+
+  /**
+   * Police radio: a squelch open, a handful of clipped vowels, a squelch
+   * close. Two formant oscillators shaped by a syllable envelope, so it lands
+   * as English-shaped speech through a bad speaker without being any words at
+   * all — nothing here is recorded, sampled or transcribed from anywhere.
+   */
+  radio(closeness: number, pan = 0) {
+    if (!this.ctx) return;
+    const now = performance.now();
+    // Short bursts, never a stream: the gap shortens as the heat rises.
+    if (now - this.lastChatter < 5200 - closeness * 2600) return;
+    this.lastChatter = now;
+
+    const ctx = this.ctx;
+    const out = this.panner(pan);
+    const level = 0.05 + closeness * 0.05;
+
+    const squelch = (at: number, vol: number) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 2400;
+      bp.Q.value = 1.4;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol, at);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.05);
+      src.connect(bp).connect(g).connect(out);
+      src.start(at, Math.random(), 0.08);
+    };
+
+    const start = ctx.currentTime + 0.02;
+    squelch(start, level * 0.9);
+
+    // The band a hand radio actually passes, and nothing outside it.
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = 1500;
+    band.Q.value = 1.1;
+    const shape = ctx.createGain();
+    shape.gain.value = 0;
+    band.connect(shape).connect(out);
+
+    const carrier = ctx.createOscillator();
+    carrier.type = 'sawtooth';
+    const formant = ctx.createOscillator();
+    formant.type = 'square';
+    carrier.connect(band);
+    formant.connect(band);
+
+    let at = start + 0.06;
+    const syllables = 4 + ((Math.random() * 5) | 0);
+    for (let i = 0; i < syllables; i++) {
+      const len = 0.07 + Math.random() * 0.11;
+      // Vowel-ish pitches with a falling contour, like someone reading a code
+      const pitch = 96 + Math.random() * 54 - i * 3;
+      carrier.frequency.setValueAtTime(pitch, at);
+      formant.frequency.setValueAtTime(620 + Math.random() * 900, at);
+      shape.gain.setValueAtTime(0.0001, at);
+      shape.gain.exponentialRampToValueAtTime(level, at + 0.02);
+      shape.gain.exponentialRampToValueAtTime(0.0001, at + len);
+      at += len + 0.02 + Math.random() * 0.05;
+    }
+
+    carrier.start(start);
+    formant.start(start);
+    carrier.stop(at + 0.1);
+    formant.stop(at + 0.1);
+    squelch(at + 0.02, level * 0.7);
+  }
+
+  /** Low crackle from a burning shell, rate-limited across the whole street. */
+  crackle(pan = 0, distance = 0) {
+    const now = performance.now();
+    if (now - this.lastCrackle < 220) return;
+    this.lastCrackle = now;
+    const near = falloff(distance);
+    this.burst(0.14, 0.03 * near, pan, 420 + Math.random() * 500, 1.2);
+  }
+
+  /**
+   * The joke. A short descending blat or a clipped burp, from somewhere on
+   * the pavement. No gameplay effect, off in Settings, and rare enough that
+   * it stays a surprise.
+   */
+  gag(pan = 0, distance = 0) {
+    if (!this.ctx || !this.gags) return;
+    const now = performance.now();
+    if (now - this.lastGag < 25000) return;
+    this.lastGag = now;
+
+    const ctx = this.ctx;
+    const out = this.panner(pan);
+    const vol = 0.05 * falloff(distance);
+    if (vol <= 0.002) return;
+    const at = ctx.currentTime + 0.01;
+    const burp = Math.random() < 0.42;
+    const len = burp ? 0.22 : 0.4;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(burp ? 128 : 92, at);
+    osc.frequency.exponentialRampToValueAtTime(burp ? 62 : 41, at + len);
+
+    // The wobble is the whole joke.
+    const lfo = ctx.createOscillator();
+    lfo.type = 'square';
+    lfo.frequency.value = burp ? 22 : 34;
+    const depth = ctx.createGain();
+    depth.gain.value = burp ? 26 : 40;
+    lfo.connect(depth).connect(osc.frequency);
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(900, at);
+    lp.frequency.exponentialRampToValueAtTime(280, at + len);
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(vol, at + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + len);
+
+    osc.connect(lp).connect(g).connect(out);
+    osc.start(at);
+    lfo.start(at);
+    osc.stop(at + len + 0.05);
+    lfo.stop(at + len + 0.05);
+  }
+
+  /** One click of dispatch opening the channel, before a spoken line. */
+  squelch(volume = 0.05) {
+    this.burst(0.07, volume, 0, 2300, 1.5);
   }
 
   shout(pan = 0, distance = 0) {

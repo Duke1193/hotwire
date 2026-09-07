@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { BUSTED, CREW_WAR, DISTRICTS, DRIVE, HEAT, SCORE, VITALS, WORLD } from '../config';
+import { BUSTED, CREW_WAR, DISTRICTS, DRIVE, FIRE, HEAT, SCORE, VITALS, WORLD } from '../config';
 import { Player } from '../entities/Player';
 import { NEUTRAL, Vehicle } from '../entities/Vehicle';
 import { CAR_SKINS } from '../gfx/Textures';
@@ -25,6 +25,7 @@ import { ScoreSystem } from '../systems/Score';
 import { readBest, SAVE_VERSION, SaveScheduler, SaveState } from '../systems/SaveGame';
 import { emptyStats, mergeStats, PlayerStats } from '../systems/Stats';
 import { Vitals } from '../systems/Vitals';
+import type { VoiceLine } from '../systems/Voice';
 import { PlayerLabel } from '../ui/PlayerLabel';
 import { Traffic } from '../systems/Traffic';
 import { InputHub } from '../systems/Input';
@@ -239,6 +240,8 @@ export class GameScene extends Phaser.Scene {
 
     this.traffic.onHorn = (x, y) => this.hear(x, y, 'horn');
     this.peds.onShout = (x, y) => this.hear(x, y, 'shout');
+    this.peds.onDown = (x, y, killed) => this.civilianDown(x, y, killed);
+    this.peds.onGag = (x, y) => this.hear(x, y, 'gag');
     this.ambient.onCrash = (x, y, strength) => {
       this.hear(x, y, 'crash', strength);
       this.traffic.shock(x, y, 320);
@@ -246,14 +249,17 @@ export class GameScene extends Phaser.Scene {
     this.jobs.onCompleted = () => this.onJobDone();
     this.jobs.onOffered = () => {
       this.session?.audio.cue('missionAccepted');
+      this.speak('jobOffer');
       this.saver?.mark();
     };
     this.jobs.onPickedUp = () => {
       this.session?.audio.cue('checkpoint');
+      this.speak('jobDrop');
       this.saver?.mark();
     };
     this.jobs.onFailed = () => {
       this.session?.audio.cue('missionFailed');
+      this.speak('jobFailed');
       this.saver?.mark();
     };
 
@@ -327,6 +333,8 @@ export class GameScene extends Phaser.Scene {
       session.net.sendEvent('hit', { d: Math.round(damage) });
       void targetId;
     };
+    // A round that misses everyone still has a street to land in.
+    this.combat.onWorldHit = (x, y, damage) => this.peds.hitAt(x, y, 15, damage);
     this.combat.onNoise = (x, y, weapon) => {
       this.lastShotWeapon = weapon;
       this.hear(x, y, 'shot');
@@ -642,7 +650,7 @@ export class GameScene extends Phaser.Scene {
   // ------------------------------------------------------------- audio
 
   /** Position a world sound relative to the camera and play it. */
-  private hear(x: number, y: number, kind: 'horn' | 'shout' | 'crash' | 'shot', strength = 1) {
+  private hear(x: number, y: number, kind: 'horn' | 'shout' | 'crash' | 'shot' | 'gag' | 'fire', strength = 1) {
     const audio = this.session?.audio;
     if (!audio) return;
     const cam = this.cameras.main;
@@ -654,7 +662,29 @@ export class GameScene extends Phaser.Scene {
     if (kind === 'horn') audio.horn(pan, dist);
     else if (kind === 'shout') audio.shout(pan, dist);
     else if (kind === 'shot') audio.gunshot(this.lastShotWeapon, pan, dist);
+    else if (kind === 'gag') audio.gag(pan, dist);
+    else if (kind === 'fire') audio.crackle(pan, dist);
     else audio.crash(strength, pan);
+  }
+
+  /**
+   * A short spoken line from whoever is handing out work, over the top of the
+   * announcement that already carries the same words on screen.
+   */
+  private speak(line: VoiceLine) {
+    const session = this.session;
+    if (!session) return;
+    session.voice.say(line, session.audio.muted);
+  }
+
+  /**
+   * Somebody on the pavement went down. This is the consequence the street
+   * was missing: the city notices, and so do the police.
+   */
+  private civilianDown(x: number, y: number, killed: boolean) {
+    this.heat.add(killed ? HEAT.civilianDown : HEAT.civilianHurt);
+    this.effects.bump(x, y, killed ? 4 : 2);
+    if (killed) trackOnce('first_civilian_down');
   }
 
   // ------------------------------------------------------------- collisions
@@ -713,7 +743,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Punchy, short feedback as the car you are in falls apart. */
-  private onVehicleStage(stage: 'damaged' | 'critical' | 'wrecked') {
+  private onVehicleStage(stage: 'damaged' | 'critical' | 'burning' | 'wrecked') {
+    if (stage === 'burning') {
+      this.objectives.announce('ON FIRE', 'Get out of this thing', '', 2000);
+      this.session?.audio.cue('ignite');
+      this.effects.ignite(this.current?.x ?? this.player.x, this.current?.y ?? this.player.y);
+      haptic([0, 30, 40, 60]);
+      this.cameras.main.shake(180, 0.008);
+      return;
+    }
     if (stage === 'wrecked') {
       this.objectives.announce('WRECKED', 'Find another car', '', 2000);
       this.session?.audio.cue('wrecked');
@@ -797,12 +835,13 @@ export class GameScene extends Phaser.Scene {
     this.updateLocalLabel(dt);
     this.teach(dt);
     this.tyreFx();
-    this.damageFx();
+    this.damageFx(dt);
     this.updatePrompt();
     this.network(dt);
     this.updateAudio(time);
 
     if (this.heat.levelUp) {
+      if (this.heat.level === 1) this.speak('heatUp');
       this.hud.alert = DISPATCH[Math.min(this.heat.level, DISPATCH.length) - 1];
       this.alertT = 2200;
       haptic([0, 24, 40, 24]);
@@ -882,6 +921,7 @@ export class GameScene extends Phaser.Scene {
       trackOnce('first_pursuit_escaped', { level });
       this.saver?.mark();
       this.session?.audio.cue('escaped');
+      this.speak('escaped');
       this.refreshRoster();
       if (this.escapes === 1) this.nudge('THAT WAS CLOSE.');
     }
@@ -895,6 +935,7 @@ export class GameScene extends Phaser.Scene {
     trackOnce('first_mission_completed');
     haptic([0, 18, 50, 26]);
     this.session?.audio.cue('missionDone');
+    this.speak('jobDone');
     this.refreshRoster();
     if (this.jobsDone === 1) this.nudge('FIRST JOB DONE.');
   }
@@ -1044,6 +1085,7 @@ export class GameScene extends Phaser.Scene {
     this.score.value = Math.max(0, this.score.value - penalty);
     this.bustedMs = 2400;
     this.objectives.announce('BUSTED', 'They took the car and a cut of your score');
+    this.speak('busted');
     this.session?.audio.cue('missionFailed');
     haptic([0, 40, 70, 40]);
     track('busted', { penalty });
@@ -1153,7 +1195,11 @@ export class GameScene extends Phaser.Scene {
     if (v && v.controls.brake > 0.5 && v.forwardSpeed > 6) audio.brake(0);
 
     const chasing = this.police.count > 0 && this.police.nearestDist < 900;
-    audio.siren(chasing || !!this.ambient.pursuitCar, chasing ? clamp(1 - this.police.nearestDist / 900, 0, 1) : 0.25);
+    const closeness = chasing ? clamp(1 - this.police.nearestDist / 900, 0, 1) : 0;
+    audio.siren(chasing || !!this.ambient.pursuitCar, chasing ? closeness : 0.25);
+    // Radio traffic is what makes a pursuit sound like a situation rather than
+    // one car following you. It keeps talking for a moment after they lose you.
+    if (chasing || this.heat.value > 0) audio.radio(closeness, 0);
     audio.ambience(nowMs);
   }
 
@@ -1223,12 +1269,30 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Cars in trouble smoke from the bonnet, wherever they are on screen. */
-  private damageFx() {
-    if (this.frame % 9 !== 0) return;
+  /** Cars in trouble smoke from the bonnet; cars that have given up burn. */
+  private damageFx(dtMs: number) {
     const view = this.cameras.main.worldView;
+
+    // Fire runs every frame because it has a timer to keep; the particles it
+    // emits are throttled instead.
     for (const v of this.obstacles) {
-      if (v.dead || v.integrity > 0.45) continue;
+      if (v.dead || !v.burning) continue;
+      if (v.burnTick(dtMs)) continue;
+      if (!view.contains(v.x, v.y)) continue;
+      if (this.frame % 3 === 0) this.effects.fire(v.x, v.y, 1 - v.burnMs / FIRE.burnMs);
+      if (this.frame % 24 === 0) this.hear(v.x, v.y, 'fire');
+    }
+
+    // Sitting in one costs you. Getting out is the whole point.
+    const mine = this.current;
+    if (mine?.burning && this.live && !this.vitals.invulnerable) {
+      const result = this.vitals.damage((FIRE.cookDps * dtMs) / 1000);
+      if (result.killed) this.die(null);
+    }
+
+    if (this.frame % 9 !== 0) return;
+    for (const v of this.obstacles) {
+      if (v.dead || v.burning || v.integrity > 0.45) continue;
       if (!view.contains(v.x, v.y)) continue;
       const nose = v.wheelPos(true, false, this.wheel);
       this.effects.damageSmoke(nose.x, nose.y, v.integrity <= 0.2);

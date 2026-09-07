@@ -1,7 +1,12 @@
-# GETAWAY
+# GETAWAY CITY
 
 A small original top-down arcade city. Steal a car, lose the cops, send one
 link and a friend appears in the same city.
+
+It is meant to feel like the *memory* of a late-90s top-down crime game rather
+than a modern one: flat colours, hard outlines, stepped particles, chunky
+silhouettes, broad avenues and a city that reacts. None of that is copied from
+any particular title — see `IP_AUDIT.md`.
 
 TypeScript + Vite + Phaser 3 (Matter physics) + Supabase Realtime.
 No backend of our own, no accounts, no build-time assets: every sprite, road
@@ -226,10 +231,23 @@ the denser city costs the frame budget almost nothing.
 - **Traffic** on a lane grid: keeps right, picks turns at intersections, brakes
   for whatever is in front, yields to sirens, sounds the horn when blocked, and
   some drivers are simply in a hurry.
-- **Pedestrians** on a sidewalk waypoint graph: they wander, loiter, wait at the
-  kerb for a gap before crossing, scatter from fast cars and sirens, and get
-  knocked aside if you cut it too fine. They never leave the graph, so they
-  cannot walk into a building and need no pathfinding.
+- **Pedestrians** on a sidewalk waypoint graph, drawn as people rather than
+  blobs — head, shoulders, two arms and two legs, with the arms and legs
+  trading places as they walk. They wander, loiter, wait at the kerb for a gap
+  before crossing, and scatter from fast cars and sirens. They never leave the
+  graph, so they cannot walk into a building and need no pathfinding.
+- **Consequences.** A pedestrian can be shot or run down. A glancing knock
+  spins someone aside; anything at speed puts them on the ground, where they
+  stay for the best part of half a minute before the crowd recycles them.
+  Either way the street scatters and HEAT climbs. There is no gore: the downed
+  pose is a plain flat figure with its limbs out.
+- **Cars that burn.** A wrecked shell usually catches, and a badly hurt one
+  sometimes does: flame cells and a column of black for nine seconds, then a
+  charred shell that stays on the street. Sitting in one costs you health, so
+  the answer is always to get out.
+- **Nine vehicle classes** spread from a 40px hatchback to an 88px lorry, plus
+  a fire appliance, a patrol car and an interceptor — silhouette first, colour
+  second. Heavier vehicles are slower and shove lighter ones.
 - **Ambient incidents** every 30–60 s near the player: a patrol chasing an NPC,
   a stalled car snarling a junction, a reckless driver, a panicking crowd.
   Each one is time-boxed and cleans itself up.
@@ -293,9 +311,9 @@ name, only anonymous ids and counters.
 
 ## Performance
 
-A full frame — 82 pedestrians, 22 traffic cars, a police pursuit, an ambient
-incident and remote players — measures ~0.7 ms of scripting on a modern laptop,
-against a 16.7 ms budget. Static geometry is baked into render textures, NPC
+A full frame — 82 pedestrians, 22 traffic cars, a police pursuit, three burning
+cars, six bodies on the road and remote players — measures ~0.6 ms of scripting
+on a modern laptop and ~1.0 ms on a phone, against a 16.7 ms budget. Static geometry is baked into render textures, NPC
 updates fall off with distance, and nothing in the update loop allocates.
 
 ## Audio
@@ -306,6 +324,21 @@ proximity-driven police siren, a city ambience bed, and short original motifs
 for missions, HEAT, escapes, players joining and the Heat Run. There are no
 audio files in this repository and nothing is sampled. Audio starts on the
 first user gesture, as browsers require, and resumes when the tab returns.
+
+**Police radio.** While there is heat on you, dispatch talks: a squelch, four
+to nine clipped syllables of a sawtooth carrier and a square formant through a
+narrow band-pass, then a second squelch. It is English-shaped and entirely
+wordless by construction — there is nothing to transcribe. Bursts come every
+five seconds at most, and get closer together the closer the pursuit is.
+
+**Dispatch voice.** Short mission lines are read aloud by the browser's own
+speech engine (`src/systems/Voice.ts`). The lines are written for this game and
+listed in that file; no voice asset ships, the same words always go up on screen
+anyway, and the whole thing is one tap off in Settings.
+
+**Street gags.** Roughly once every half-minute at the very most, somebody on
+the pavement makes a noise they would rather you had not heard. It has no
+gameplay effect, and there is a switch for it in Settings next to the voice.
 
 ## Provenance
 

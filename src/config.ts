@@ -3,7 +3,8 @@
 export const WORLD = {
   width: 3300,
   height: 2300,
-  roadHalfWidth: 92,
+  /* Generous by car width on purpose: two lanes each way with room to slide. */
+  roadHalfWidth: 104,
   sidewalk: 26,
   /** Spacing of kerbside street furniture; phones get a sparser street. */
   propStep: 108,
@@ -58,6 +59,9 @@ export const HEAT = {
   contactRadius: 560,
   /** seconds out of contact before the fast cool-down kicks in */
   escapeTime: 2.6,
+  /** Hurting people on the street is what brings the city down on you. */
+  civilianDown: 14,
+  civilianHurt: 4,
   impactFloor: 2.6,
   impactScale: 1.9,
   maxPerImpact: 20,
@@ -67,22 +71,33 @@ export const HEAT = {
 export const CAM = {
   lerp: 0.09,
   leadFoot: 6,
-  leadCar: 26,
-  zoomFoot: 1.72,
-  zoomCar: 1.52,
-  zoomFast: 1.2,
+  leadCar: 30,
+  /*
+   * Three clearly different distances, not three shades of the same one: on
+   * foot you are in the street, in a car you can see the junction, and flat
+   * out the city opens up in front of you.
+   */
+  zoomFoot: 1.78,
+  zoomCar: 1.42,
+  zoomFast: 0.98,
+  /** How fast the zoom chases the target. Noticeable, still smooth. */
+  zoomLerp: 0.05,
 };
 
 export const COLORS = {
-  /** Roads sit clearly below the pavement in value: kerbs should read at a glance. */
-  asphalt: 0x33363d,
-  asphaltEdge: 0x272a30,
-  line: 0xf6efd6,
-  lineDim: 0x9d9a86,
-  sidewalk: 0x9aa1ae,
-  sidewalkEdge: 0xb4bbc7,
-  lot: 0x5d616b,
-  grass: 0x4b7c54,
+  /*
+   * Harsher and flatter than a modern game would grade it: the road is nearly
+   * black, the pavement is nearly white, and there is very little in between.
+   * Cheap contrast is doing the work that soft lighting used to.
+   */
+  asphalt: 0x2a2d33,
+  asphaltEdge: 0x1c1f24,
+  line: 0xfff6d8,
+  lineDim: 0xa8a48d,
+  sidewalk: 0xa8afbc,
+  sidewalkEdge: 0xc6ccd6,
+  lot: 0x64686f,
+  grass: 0x437a4c,
   /** Painted hazard/■kerb accents used sparingly around the city. */
   hazard: 0xd8a83c,
 };
@@ -169,10 +184,11 @@ export const TRAFFIC = {
   /** Cars kept alive around the player. */
   count: 22,
   /** Half the distance between the two lane centres of a road. */
-  lane: 46,
-  maxSpeed: 5.2,
-  recklessSpeed: 8.4,
-  accel: 0.1,
+  lane: 52,
+  /* City traffic pootles. You are the fast thing on this road, not them. */
+  maxSpeed: 3.4,
+  recklessSpeed: 5.6,
+  accel: 0.08,
   /** Chance a spawned driver is in a hurry. */
   recklessChance: 0.14,
   /** Look this far ahead for something to brake for. */
@@ -185,6 +201,12 @@ export const TRAFFIC = {
 
 export const PEDS = {
   count: 82,
+  /** One pistol round is not quite enough; a shotgun always is. */
+  health: 34,
+  /** A car above this speed knocks someone down for good rather than aside. */
+  fatalSpeed: 4.6,
+  /** How long a body stays on the street before the crowd is recycled. */
+  downMs: 26000,
   speed: 0.72,
   runSpeed: 1.85,
   /** Sidewalk waypoints are spaced roughly this far apart. */
@@ -235,6 +257,22 @@ export const VITALS = {
   downTime: 2.6,
   regenDelay: 9,
   regenRate: 4,
+};
+
+/**
+ * A wreck does not vanish, it burns. Four readable stages, one timer, no
+ * explosion: fire, smoke, then a black shell that stays on the street.
+ */
+export const FIRE = {
+  /** Chance a shell catches once it is wrecked. */
+  chance: 0.62,
+  /** Chance a badly hurt but still driveable car catches anyway. */
+  criticalChance: 0.16,
+  burnMs: 9000,
+  /** Damage per second to anyone still sitting in it. */
+  cookDps: 16,
+  /** Pedestrians give a burning car this much room. */
+  scare: 190,
 };
 
 export const COMBAT = {

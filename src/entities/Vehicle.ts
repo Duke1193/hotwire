@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DRIVE } from '../config';
+import { DRIVE, FIRE } from '../config';
 import { CarSkin } from '../gfx/Textures';
 import { clamp, decay, lerp } from '../util/math';
 
@@ -47,6 +47,12 @@ export class Vehicle {
   integrity = 1;
   /** Once wrecked the engine is gone; the shell just rolls to a stop. */
   wrecked = false;
+  /** Alight. Counts down to a burnt-out shell. */
+  burning = false;
+  /** Milliseconds of fire left; 0 once it has burnt out. */
+  burnMs = 0;
+  /** True after the fire has gone out: a black shell that stays put. */
+  burnt = false;
 
   private stuckMs = 0;
   private lastX = 0;
@@ -80,7 +86,7 @@ export class Vehicle {
       { type: 'rectangle', width: skin.length, height: skin.width },
       { label: isPolice ? 'police' : 'car', chamfer: { radius: 6 } },
     );
-    this.sprite.setMass(isPolice ? 12 : 11);
+    this.sprite.setMass(skin.mass);
     this.sprite.setFrictionAir(0);
     this.sprite.setRotation(angle);
     this.sprite.setDepth(10);
@@ -101,8 +107,9 @@ export class Vehicle {
     const v = this.sprite.body as MatterJS.BodyType;
     return Math.hypot(v.velocity.x, v.velocity.y);
   }
-  /** Four readable states, driven by one number. */
-  get condition(): 'healthy' | 'damaged' | 'critical' | 'wrecked' {
+  /** Five readable states, driven by one number and one timer. */
+  get condition(): 'healthy' | 'damaged' | 'critical' | 'burning' | 'wrecked' {
+    if (this.burning) return 'burning';
     if (this.wrecked) return 'wrecked';
     if (this.integrity > 0.66) return 'healthy';
     if (this.integrity > 0.33) return 'damaged';
@@ -113,18 +120,50 @@ export class Vehicle {
    * Takes a knock. Heavier shells shrug more of it off; the shell darkens and
    * loses its shine as it goes, so damage is visible before it is fatal.
    */
-  damage(magnitude: number): 'damaged' | 'critical' | 'wrecked' | null {
+  damage(magnitude: number): 'damaged' | 'critical' | 'burning' | 'wrecked' | null {
     if (this.wrecked || magnitude < 2.2) return null;
     const before = this.condition;
     this.integrity = clamp(this.integrity - ((magnitude - 2.2) * 0.028) / this.skin.durability, 0, 1);
     if (this.integrity <= 0) this.wrecked = true;
+    this.shade();
 
-    const shade = 0.55 + this.integrity * 0.45;
-    const tint = Phaser.Display.Color.GetColor(255 * shade, 255 * shade, 255 * shade);
-    this.sprite.setTint(tint);
+    // A shell that has just given up usually goes up; one that is merely in a
+    // bad way sometimes does. Neither is guaranteed, so a wreck still reads as
+    // an event rather than a scripted beat.
+    if (!this.burning && !this.burnt) {
+      const roll = Math.random();
+      if (this.wrecked ? roll < FIRE.chance : this.integrity <= 0.22 && roll < FIRE.criticalChance) this.ignite();
+    }
 
     const after = this.condition;
     return after !== before && after !== 'healthy' ? after : null;
+  }
+
+  /** Sets the shell alight. Safe to call twice. */
+  ignite() {
+    if (this.burning || this.burnt) return;
+    this.burning = true;
+    this.burnMs = FIRE.burnMs;
+  }
+
+  /** Runs the fire down. Returns true on the frame it burns out. */
+  burnTick(dtMs: number): boolean {
+    if (!this.burning) return false;
+    this.burnMs -= dtMs;
+    if (this.burnMs > 0) return false;
+    this.burning = false;
+    this.burnt = true;
+    this.wrecked = true;
+    this.integrity = 0;
+    this.shade();
+    return true;
+  }
+
+  /** Damage darkens the shell; fire blackens it. One flat tint, no gloss. */
+  private shade() {
+    const level = this.burnt ? 0.3 : 0.55 + this.integrity * 0.45;
+    const tint = Phaser.Display.Color.GetColor(255 * level, 255 * level * (this.burnt ? 0.94 : 1), 255 * level * (this.burnt ? 0.9 : 1));
+    this.sprite.setTint(tint);
   }
 
   get slipping() {

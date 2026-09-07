@@ -4,6 +4,7 @@ import { inviteUrl, resolveRoom, RoomInfo } from './net/Room';
 import { Analytics, track } from './systems/Analytics';
 import { AudioBus } from './systems/Audio';
 import { Crew, crewFromUrl, loadCrew, makeCrew, saveCrew } from './systems/Crew';
+import { Voice } from './systems/Voice';
 import { Identity, loadIdentity, sanitizeName, saveIdentity } from './systems/Identity';
 import { clearSave, readBest, readSave, SaveState } from './systems/SaveGame';
 import { getOverlay, initOverlay, Overlay } from './ui/Overlay';
@@ -15,6 +16,7 @@ export interface Session {
   onProfileChange: (() => void) | null;
   room: RoomInfo;
   audio: AudioBus;
+  voice: Voice;
   overlay: Overlay;
   net: MultiplayerSystem;
   /** A run to restore, when the player chose CONTINUE. */
@@ -42,17 +44,26 @@ export function onSession(cb: (s: Session) => void) {
  */
 export function bootSession() {
   const audio = new AudioBus();
+  const voice = new Voice();
+  voice.onOpen = () => audio.squelch();
   const overlay = initOverlay(audio.muted);
   const room = resolveRoom();
   const existing = loadIdentity();
 
-  overlay.onSound = (muted) => audio.setMuted(muted);
+  overlay.onSound = (muted) => {
+    audio.setMuted(muted);
+    if (muted) voice.stop();
+  };
+  overlay.onVoice = (on) => voice.setEnabled(on);
+  overlay.onGags = (on) => audio.setGags(on);
+  overlay.setAudioPrefs(voice.enabled, audio.gags);
   wirePrivacy(overlay);
 
   if (existing) {
     // Returning player: straight in. Audio still needs a gesture to start.
     const once = () => {
       audio.start();
+      voice.start();
       window.removeEventListener('pointerdown', once);
       window.removeEventListener('keydown', once);
     };
@@ -69,17 +80,19 @@ export function bootSession() {
       overlay.showResume({ name: existing.name, score: save.score, best: Math.max(save.best, readBest()) });
       overlay.onContinue = () => {
         audio.start();
-        finish(existing, room, audio, overlay, true, save);
+      voice.start();
+        finish(existing, room, audio, voice, overlay, true, save);
       };
       overlay.onNewRun = () => {
         audio.start();
+      voice.start();
         clearSave();
-        finish(existing, room, audio, overlay, true, null);
+        finish(existing, room, audio, voice, overlay, true, null);
       };
       return;
     }
 
-    finish(existing, room, audio, overlay, true, null);
+    finish(existing, room, audio, voice, overlay, true, null);
     return;
   }
 
@@ -95,7 +108,7 @@ export function bootSession() {
     track('nickname_created', { is_handle: check.value.startsWith('@') });
     audio.start();
     overlay.hideBoot();
-    finish(identity, room, audio, overlay, false, null);
+    finish(identity, room, audio, voice, overlay, false, null);
   };
 }
 
@@ -186,6 +199,7 @@ function finish(
   identity: Identity,
   room: RoomInfo,
   audio: AudioBus,
+  voice: Voice,
   overlay: Overlay,
   returning: boolean,
   resume: SaveState | null,
@@ -207,6 +221,7 @@ function finish(
     onProfileChange: null,
     room,
     audio,
+    voice,
     overlay,
     net,
     resume,
@@ -262,7 +277,7 @@ function shareInvite(room: RoomInfo, session: Session, overlay: Overlay, offline
   if (touch && navigator.share) {
     navigator
       .share({
-        title: 'GETAWAY',
+        title: 'GETAWAY CITY',
         text: crew ? `join [${crew.tag}] ${crew.name}` : 'steal a car. lose the cops.',
         url,
       })

@@ -7,6 +7,8 @@ export class Effects {
   private dust: Phaser.GameObjects.Particles.ParticleEmitter;
   private sparks: Phaser.GameObjects.Particles.ParticleEmitter;
   private smoke: Phaser.GameObjects.Particles.ParticleEmitter;
+  private flame: Phaser.GameObjects.Particles.ParticleEmitter;
+  private soot: Phaser.GameObjects.Particles.ParticleEmitter;
 
   constructor(private scene: Phaser.Scene, private skidRT: Phaser.GameObjects.RenderTexture) {
     this.dust = scene.add.particles(0, 0, 'puff', {
@@ -41,6 +43,47 @@ export class Effects {
       emitting: false,
     });
     this.smoke.setDepth(15);
+
+    // A burning car is two cheap emitters and nothing else: stepped flame
+    // cells that rise and shrink, and a fat column of black over the top.
+    this.flame = scene.add.particles(0, 0, 'flame', {
+      lifespan: { min: 260, max: 480 },
+      speed: { min: 8, max: 46 },
+      scale: { start: 1.15, end: 0.15 },
+      alpha: { start: 1, end: 0.5 },
+      rotate: { min: -12, max: 12 },
+      blendMode: Phaser.BlendModes.ADD,
+      emitting: false,
+    });
+    this.flame.setDepth(16);
+
+    this.soot = scene.add.particles(0, 0, 'puff', {
+      lifespan: { min: 900, max: 1500 },
+      speed: { min: 6, max: 34 },
+      scale: { start: 0.9, end: 3 },
+      alpha: { start: 0.42, end: 0 },
+      tint: 0x14161b,
+      emitting: false,
+    });
+    this.soot.setDepth(17);
+  }
+
+  /**
+   * One tick of a car fire. Called on a slow cadence from the scene, so the
+   * cost of a burning street is a handful of particles per frame, not a
+   * simulation.
+   */
+  fire(x: number, y: number, strength: number) {
+    const n = isMobile ? 1 : Math.random() < strength ? 2 : 1;
+    this.flame.emitParticleAt(x, y, n);
+    if (Math.random() < (isMobile ? 0.4 : 0.7)) this.soot.emitParticleAt(x, y - 2, 1);
+  }
+
+  /** The moment it catches: one puff of flame, no explosion. */
+  ignite(x: number, y: number) {
+    this.flame.emitParticleAt(x, y, isMobile ? 5 : 10);
+    this.soot.emitParticleAt(x, y, isMobile ? 2 : 4);
+    this.sparks.emitParticleAt(x, y, isMobile ? 4 : 10);
   }
 
   skid(x: number, y: number, rotation: number, alpha: number) {
