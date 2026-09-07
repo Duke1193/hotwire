@@ -18,9 +18,14 @@ const px = (n: number) => `${Math.round(n * S)}px`;
  * Ownership is split by screen region so two elements can never collide: the
  * canvas draws the top-left meters, the bottom-right driving readout and the
  * centre notification, while the DOM overlay owns the whole top-right column
- * (room, invite, settings, objective). The bottom edge is computed from where
+ * (room, score, settings, objective). The bottom edge is computed from where
  * the touch controls actually are, not from a fixed offset, so the speed
  * readout sits above real thumbs on any screen.
+ *
+ * A phone gets a shorter version of all of it. The top-left is the HEAT meter
+ * and nothing else; the score moves into the DOM row; and everything that is
+ * only sometimes true — the pursuit line, health, speed, the weapon — is drawn
+ * only while it is true. A desktop has the room, so it keeps the lot.
  */
 export class UIScene extends Phaser.Scene {
   private game_!: GameScene;
@@ -52,6 +57,9 @@ export class UIScene extends Phaser.Scene {
   private barWidth = 250;
   private lastInset = -1;
   private safeTop = 0;
+  /** Recomputed every frame: a phone shows less of this HUD than a desktop. */
+  private compact = false;
+  private showVitals = true;
 
   constructor() {
     super('ui');
@@ -149,6 +157,21 @@ export class UIScene extends Phaser.Scene {
    * Tells the DOM overlay how far down its column has to start so it clears
    * the meters the canvas draws. Measured from the real regions, not assumed.
    */
+  /**
+   * Lets the DOM park the invite button just above the stick ring, and keeps
+   * the overlay column from ever growing down into the driving buttons.
+   */
+  private publishStickTop() {
+    const overlay = this.game_?.overlay;
+    if (!overlay) return;
+    const stick = this.touch?.stickTop ?? Number.POSITIVE_INFINITY;
+    if (Number.isFinite(stick)) overlay.setStickTop(Math.round(stick / RENDER_SCALE));
+    const buttons = this.touch?.buttonsTop ?? Number.POSITIVE_INFINITY;
+    overlay.setControlsTop(
+      Number.isFinite(buttons) ? Math.round(buttons / RENDER_SCALE) : Math.round(this.scale.height / RENDER_SCALE),
+    );
+  }
+
   private publishInset() {
     const css = hudTopInset(layout.mode, this.safeTop);
     if (css === this.lastInset) return;
@@ -210,6 +233,8 @@ export class UIScene extends Phaser.Scene {
     const hud = this.game_?.hud;
     if (!hud) return;
 
+    this.compact = layout.mode !== 'desktop';
+
     if (hud.live) this.introMs += delta;
     // The intro title steps aside the moment the game has something to say.
     const introFade = 1 - clamp((this.introMs - 1600) / 1300, 0, 1);
@@ -217,6 +242,7 @@ export class UIScene extends Phaser.Scene {
     if (!hasTouch) this.hint.setAlpha(clamp((this.introMs - 300) / 800, 0, 1) * 0.9);
 
     this.publishInset();
+    this.publishStickTop();
     this.touch.setEnabled(hasTouch && hud.live);
     this.touch.setMode(hud.driving ? 'drive' : 'foot');
     this.touch.setArmed(Boolean(hud.weapon));
@@ -225,6 +251,17 @@ export class UIScene extends Phaser.Scene {
 
     this.shownHeat = lerp(this.shownHeat, hud.heat, clamp(delta / 90, 0, 1));
     this.shownScore = lerp(this.shownScore, hud.score, clamp(delta / 120, 0, 1));
+
+    // Health only earns its space once something has happened to it.
+    this.showVitals = !this.compact || hud.health < 0.999 || hud.armor > 0.001 || hud.protected;
+    const driverReadout = !this.compact || hud.driving;
+    this.score.setVisible(!this.compact);
+    this.scoreGain.setVisible(!this.compact);
+    this.status.setVisible(!this.compact || hud.status !== 'clear');
+    this.speed.setVisible(driverReadout);
+    this.speedUnit.setVisible(driverReadout);
+    this.weapon.setVisible(Boolean(hud.weapon));
+    if (this.compact) this.game_.overlay?.setScore(Math.round(hud.score));
 
     this.g.clear();
     this.drawHeatBar(hud);
@@ -316,6 +353,7 @@ export class UIScene extends Phaser.Scene {
 
   /** Health and armour, directly under the score so the eye finds them. */
   private drawVitals(hud: GameScene['hud']) {
+    if (!this.showVitals) return;
     const x = this.region.left;
     const y = this.region.top + 118 * S;
     const w = this.barWidth * 0.6;
@@ -347,12 +385,32 @@ export class UIScene extends Phaser.Scene {
 
   /** A plate under the speed and weapon so they read against a bright street. */
   private drawDriverPlate(hud: GameScene['hud']) {
+    // The plate is only ever as big as what is actually on screen, so hiding
+    // the speed on foot leaves nothing behind.
+    const parts: Phaser.Geom.Rectangle[] = [];
+    if (this.speed.visible) parts.push(this.speed.getBounds(), this.speedUnit.getBounds());
+    if (this.weapon.visible) parts.push(this.weapon.getBounds());
+    if (!parts.length) return;
+
     const pad = 8 * S;
-    const right = Math.min(this.speedUnit.getBounds().right + pad * 0.6, this.scale.width - 2 * S);
-    const top = (hud.weapon ? this.weapon.getBounds().y : this.speed.getBounds().y) - pad * 0.5;
-    const bottom = this.speedUnit.getBounds().y + this.speedUnit.getBounds().height + pad * 0.4;
-    const left = Math.min(this.speed.getBounds().x, hud.weapon ? this.weapon.getBounds().x : Infinity) - pad;
-    this.plate(left, top, right - left, bottom - top, hud.driving ? 0x69d8ff : 0x39415a, 0.62);
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    for (const b of parts) {
+      left = Math.min(left, b.x);
+      top = Math.min(top, b.y);
+      right = Math.max(right, b.right);
+      bottom = Math.max(bottom, b.bottom);
+    }
+    this.plate(
+      left - pad,
+      top - pad * 0.5,
+      Math.min(right + pad * 0.6, this.scale.width - 2 * S) - (left - pad),
+      bottom + pad * 0.4 - (top - pad * 0.5),
+      hud.driving ? 0x69d8ff : 0x39415a,
+      0.62,
+    );
   }
 
   /** The arrest meter: five blocks that fill while you are being held. */

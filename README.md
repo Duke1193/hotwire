@@ -31,9 +31,13 @@ npm run build
 | `Tab` | scoreboard |
 | `Esc` | settings and help |
 
-On a touch device the same actions come from a floating thumb stick on the
-left and pill buttons on the right — `ENTER` on foot, `GO` / `BRAKE` / `DRIFT`
-/ `EXIT` while driving. Keyboard and touch write into one `InputState`
+On a touch device the same actions come from a thumb stick parked in the
+lower-left corner — an outer ring with four direction ticks and an inner nub,
+captioned `MOVE` on foot and `STEER` in a car — and pill buttons on the right:
+`ENTER` on foot, `GO` / `BRAKE` / `DRIFT` / `EXIT` while driving. The ring is
+drawn where it lives rather than appearing under a finger, so it can be seen
+before it is used; a drag that starts elsewhere on the left still picks it up
+and the ring follows that thumb until release. Keyboard and touch write into one `InputState`
 (`src/systems/Input.ts`), so nothing downstream knows which was used and touch
 is never faked as synthetic key events.
 
@@ -46,6 +50,18 @@ DOM overlay at once. In portrait the meta column sits under the canvas readouts
 using an inset the HUD publishes itself; in landscape the column narrows, the
 kill feed steps aside and `KM/H` moves next to the driving buttons so `EXIT`
 never lands behind the objective card.
+
+A phone gets a shorter HUD than a desktop, because the point of a phone screen
+is the street on it. The top-left is the HEAT meter and nothing else. The top
+right is one compact row — room status, score, menu. Invite moves to a small
+icon button above the stick, where the thumb already is. Everything that is
+only sometimes true is drawn only while it is true: the pursuit line, health
+and armour, the speed, the weapon. A new mission arrives as the centre
+announcement and then settles into a one-line pill — `HOT DELIVERY · 95M` —
+which expands back to the full card on a tap, or in settings. The column stops
+above the driving buttons at a line the controls publish, so an expanded card
+on a short landscape phone scrolls inside its column instead of sitting on
+`GO`. Desktop is untouched by all of this and keeps the full HUD.
 
 The visible viewport is the only size we trust. `window.visualViewport` (its
 `resize` **and** `scroll` events), a `ResizeObserver`, `orientationchange`,

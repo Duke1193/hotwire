@@ -1,6 +1,6 @@
 # IP / provenance audit — GETAWAY
 
-Last reviewed: 2026-09-06 (re-run after the real-device mobile / entry-UX pass) · Reviewed at commit: see `git log` for this file.
+Last reviewed: 2026-09-07 (re-run after the mobile HUD cleanup pass) · Reviewed at commit: see `git log` for this file.
 
 This document records where everything in this repository came from, so the
 project's independence can be checked rather than assumed. It is an
@@ -84,6 +84,8 @@ and baked into the two existing render textures:
 | Job kiosk | A street terminal with a lit screen, invented for this game. Not a phone. |
 | HUD | Dark plates with a coloured left edge, a segmented HEAT meter, and bar-style health and armour. No hearts, no stars, no faction meters, no money line. |
 | Vignette | A soft corner darkening drawn once and stretched. No scanlines, no VHS, no chromatic aberration, no fake low-resolution filter. |
+| Thumb stick | A dark disc, a cyan outer ring, a faint inner ring and four outward triangle ticks, with a nub of concentric circles — drawn by `Textures.ts` like everything else. A generic virtual stick, not any product's control art. |
+| Invite glyph | A head, shoulders and a plus sign, six inline SVG primitives written by hand in `Overlay.ts`. No icon set, no font icon, no traced artwork. |
 | Audio | Per-weapon reports, a two-note district sting, and down/wrecked/pickup motifs — all synthesised, as before. |
 
 Added in the earlier combat/crew pass:

@@ -517,6 +517,21 @@ export function buildTextures(scene: Phaser.Scene) {
     g.strokeCircle(100, 100, 94);
     g.lineStyle(2, 0xffffff, 0.12);
     g.strokeCircle(100, 100, 62);
+    // Four outward ticks: at a glance the ring reads as a direction control
+    // rather than a decorative circle.
+    g.fillStyle(0x69d8ff, 0.6);
+    for (const [dx, dy] of [
+      [0, -1],
+      [1, 0],
+      [0, 1],
+      [-1, 0],
+    ]) {
+      const tipX = 100 + dx * 88;
+      const tipY = 100 + dy * 88;
+      const baseX = 100 + dx * 72;
+      const baseY = 100 + dy * 72;
+      g.fillTriangle(tipX, tipY, baseX - dy * 9, baseY + dx * 9, baseX + dy * 9, baseY - dx * 9);
+    }
   });
 
   make(scene, 'stick-knob', 120, 120, (g) => {

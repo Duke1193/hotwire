@@ -57,7 +57,7 @@
   left: calc(10px + env(safe-area-inset-left, 0px));
   right: calc(10px + env(safe-area-inset-right, 0px));
   width: auto;
-  max-height: 42%;
+  max-height: min(42%, calc(var(--gw-controls-top, 100%) - var(--gw-hud-top, 120px) - 20px));
 }
 
 .gw-root[data-layout='portrait'] .gw-hud {
@@ -73,10 +73,15 @@
 }
 
 /* LANDSCAPE: vertical space is the scarce resource. */
+/*
+ * The column stops where the driving buttons start. That line is published by
+ * the controls themselves (--gw-controls-top), so an expanded objective on a
+ * short landscape phone scrolls inside the column instead of sitting on GO.
+ */
 .gw-root[data-layout='landscape'] .gw-column {
   top: calc(10px + env(safe-area-inset-top, 0px));
   width: min(226px, 34vw);
-  max-height: calc(100% - 130px);
+  max-height: calc(var(--gw-controls-top, 100%) - 20px - env(safe-area-inset-top, 0px));
   gap: 5px;
 }
 
@@ -96,8 +101,21 @@
   max-height: 46vh;
 }
 
+.gw-column {
+  overflow: hidden;
+}
+
 .gw-column > * {
   pointer-events: auto;
+  flex: 0 0 auto;
+}
+
+/* The expanded card is the one thing that gives when the column runs short. */
+.gw-column > .gw-objective {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .gw-hud {
@@ -166,6 +184,128 @@
   text-align: center;
   color: var(--gw-dim);
   flex: none;
+}
+
+/* --------------------------------------------------------- score chip */
+
+/*
+ * On a phone the score rides in the top row instead of taking a panel of its
+ * own on the left, which is the single biggest thing the play area gets back.
+ */
+.gw-score {
+  flex: none;
+  gap: 6px;
+  color: var(--gw-dim);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.gw-score b {
+  margin-left: 0;
+  transition: color 0.25s;
+}
+
+.gw-score b.gw-up { color: #7ee0a1; transition: none; }
+
+/* Desktop keeps the score on the canvas, where there is room for it. */
+.gw-root[data-layout='desktop'] .gw-score { display: none; }
+
+/* ------------------------------------------------------- objective pill */
+
+/*
+ * The collapsed objective. A new mission is announced in the centre of the
+ * screen for a moment; what stays behind is this one line. Tapping it puts
+ * the full card back.
+ */
+.gw-pill {
+  display: none;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  max-width: 100%;
+  background: var(--gw-panel);
+  border: 1px solid var(--gw-line);
+  border-radius: 999px;
+  padding: 6px 12px 6px 9px;
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  line-height: 1;
+  color: var(--gw-ink);
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.gw-pill .gw-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gw-accent);
+  flex: none;
+}
+
+.gw-pill[data-kind='crewwar'] .gw-pill-dot { background: #ff6b5e; }
+.gw-pill[data-kind='heatrun'] .gw-pill-dot { background: var(--gw-warn); }
+.gw-pill[data-kind='pursuit'] .gw-pill-dot { background: #ff4d3d; }
+.gw-pill[data-kind='free'] .gw-pill-dot { background: #4a5470; }
+
+.gw-pill[aria-expanded='true'] { border-color: var(--gw-accent); }
+
+.gw-root:not([data-layout='desktop']) .gw-pill:not(.gw-hidden) {
+  display: flex;
+  animation: gw-pill-in 0.22s ease-out;
+}
+
+/* The mission settles out of the centre announcement into the pill. */
+@keyframes gw-pill-in {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --------------------------------------------------- thumb invite button */
+
+/*
+ * Invite belongs where the thumb already is, not in the top row. It is parked
+ * just above the stick ring, using the position the stick itself publishes.
+ */
+.gw-invite-mini {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  top: calc(var(--gw-stick-top, 70%) - 48px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background: var(--gw-panel);
+  border: 1px solid #2c5b73;
+  border-radius: 50%;
+  color: var(--gw-accent);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.gw-invite-mini svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gw-invite-mini:active { background: rgba(105, 216, 255, 0.18); }
+
+.gw-root:not([data-layout='desktop']) .gw-invite-mini { display: flex; }
+
+/* Top row on a phone: room status, score, menu. Nothing else. */
+.gw-root:not([data-layout='desktop']) #gw-invite,
+.gw-root:not([data-layout='desktop']) #gw-sound {
+  display: none;
 }
 
 /* ----------------------------------------------------------- objective */

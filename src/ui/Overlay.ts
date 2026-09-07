@@ -81,6 +81,26 @@ export class Overlay {
   private playerRows!: HTMLDivElement;
   private crewRows!: HTMLDivElement;
   private objective!: HTMLDivElement;
+  private objPill!: HTMLButtonElement;
+  private pillText!: HTMLElement;
+  private scoreValue!: HTMLElement;
+  private lastScore = -1;
+  private scoreTimer = 0;
+  private current: Objective | null = null;
+  private expanded = false;
+  private lastPill = '';
+  private announcing = false;
+  private lastObjState = '';
+  private lastDistance = '';
+  private lastClock = '';
+  private lastCard = '';
+  private objTitle!: HTMLElement;
+  private objLine!: HTMLElement;
+  private objDistance!: HTMLElement;
+  private objTimer!: HTMLElement;
+  private objExtra!: HTMLElement;
+  private lastStickTop = -1;
+  private lastControlsTop = -1;
   private feed!: HTMLDivElement;
   private toasts!: HTMLDivElement;
   private nudge!: HTMLDivElement;
@@ -99,6 +119,7 @@ export class Overlay {
   constructor(muted: boolean) {
     this.root = document.createElement('div');
     this.root.className = 'gw-root';
+    this.root.dataset.layout = 'desktop';
     this.root.innerHTML = this.markup();
     document.body.appendChild(this.root);
     this.bind();
@@ -116,9 +137,13 @@ export class Overlay {
             <span class="gw-dot"></span><span id="gw-roomcode">ROOM ····</span><b id="gw-online">OFFLINE</b>
           </div>
           <button class="gw-btn" id="gw-invite">INVITE</button>
+          <div class="gw-chip gw-score" id="gw-score" title="Score"><span>SCORE</span><b id="gw-score-val">0</b></div>
           <button class="gw-icon" id="gw-sound" title="Sound"></button>
           <button class="gw-icon" id="gw-settings-btn" title="Settings and help">☰</button>
         </div>
+        <button class="gw-pill gw-hidden" id="gw-obj-pill" aria-expanded="false">
+          <span class="gw-pill-dot"></span><span id="gw-pill-text">FREE ROAM</span>
+        </button>
         <div class="gw-objective gw-hidden" id="gw-objective">
           <h4 id="gw-obj-title">FREE ROAM</h4>
           <p id="gw-obj-line">Find a job</p>
@@ -137,6 +162,14 @@ export class Overlay {
         </div>
       </div>
       </div>
+
+      <button class="gw-invite-mini" id="gw-invite-mini" title="Invite a friend" aria-label="Invite a friend">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="9.5" cy="8" r="3.4" />
+          <path d="M3.4 19.2c0-3.3 2.7-5.6 6.1-5.6s6.1 2.3 6.1 5.6" />
+          <path d="M18.4 7.2v6.2M15.3 10.3h6.2" />
+        </svg>
+      </button>
 
       <div class="gw-toasts" id="gw-toasts"></div>
 
@@ -243,6 +276,14 @@ export class Overlay {
     this.playerRows = this.q('gw-player-rows');
     this.crewRows = this.q('gw-crew-rows');
     this.objective = this.q('gw-objective');
+    this.objPill = this.q('gw-obj-pill');
+    this.objTitle = this.q('gw-obj-title');
+    this.objLine = this.q('gw-obj-line');
+    this.objDistance = this.q('gw-obj-distance');
+    this.objTimer = this.q('gw-obj-timer');
+    this.objExtra = this.q('gw-obj-extra');
+    this.pillText = this.q('gw-pill-text');
+    this.scoreValue = this.q('gw-score-val');
     this.feed = this.q('gw-feed');
     this.toasts = this.q('gw-toasts');
     this.nudge = this.q('gw-nudge');
@@ -278,6 +319,8 @@ export class Overlay {
     });
 
     this.inviteBtn.addEventListener('click', () => this.onInvite?.());
+    this.q('gw-invite-mini').addEventListener('click', () => this.onInvite?.());
+    this.objPill.addEventListener('click', () => this.expandObjective(this.objective.classList.contains('gw-hidden')));
     this.q('gw-settings-invite').addEventListener('click', () => this.onInvite?.());
     this.q('gw-nudge-invite').addEventListener('click', () => {
       this.onInvite?.();
@@ -365,25 +408,102 @@ export class Overlay {
     this.inviteBtn.textContent = label;
   }
 
-  /** The persistent objective card, directly under the room cluster. */
-  setObjective(objective: Objective | null) {
+  /**
+   * The objective, in whichever form this screen can afford.
+   *
+   * On a phone the full card is too much to carry permanently, so the mission
+   * arrives as the centre announcement and then lives as a one-line pill under
+   * the top bar; tapping the pill (or opening settings) brings the full text
+   * back. On desktop there is room for the card, so it simply stays.
+   */
+  setObjective(objective: Objective | null, announcing = false) {
+    this.announcing = announcing;
+    const changed =
+      !objective ||
+      !this.current ||
+      objective.kind !== this.current.kind ||
+      objective.title !== this.current.title ||
+      objective.line !== this.current.line;
+    this.current = objective;
+
     if (!objective) {
-      this.objective.classList.add('gw-hidden');
-      this.settingsObjective.textContent = '—';
+      this.expanded = false;
+      this.applyObjective();
+      if (changed) this.settingsObjective.textContent = '—';
       return;
     }
-    this.objective.classList.remove('gw-hidden');
-    this.objective.dataset.kind = objective.kind;
-    this.q('gw-obj-title').textContent = objective.title;
-    this.q('gw-obj-line').textContent = objective.line;
-    this.q('gw-obj-distance').textContent =
-      objective.distance !== undefined ? `${Math.round(objective.distance)} M` : '';
-    this.q('gw-obj-timer').textContent =
+
+    // A new mission has just been announced in the centre of the screen, so
+    // the pill collapses back down rather than covering the road.
+    if (changed) this.expanded = false;
+    this.applyObjective();
+
+    // This runs every frame, so nothing here touches the DOM unless the text
+    // it would write has actually changed — and a hidden card writes nothing.
+    const pill = pillLabel(objective);
+    if (pill !== this.lastPill) {
+      this.lastPill = pill;
+      this.pillText.textContent = pill;
+      this.objPill.dataset.kind = objective.kind;
+    }
+    if (changed) this.settingsObjective.textContent = `${objective.title} — ${objective.line}`;
+    if (this.objective.classList.contains('gw-hidden')) return;
+
+    const card = `${objective.kind}|${objective.title}|${objective.line}|${objective.extra ?? ''}`;
+    if (card !== this.lastCard) {
+      this.lastCard = card;
+      this.objective.dataset.kind = objective.kind;
+      this.objTitle.textContent = objective.title;
+      this.objLine.textContent = objective.line;
+      this.objExtra.textContent = objective.extra ?? '';
+      this.objExtra.classList.toggle('gw-hidden', !objective.extra);
+    }
+    const distance = objective.distance !== undefined ? `${Math.round(objective.distance)} M` : '';
+    if (distance !== this.lastDistance) {
+      this.lastDistance = distance;
+      this.objDistance.textContent = distance;
+    }
+    const clock =
       objective.seconds !== undefined && objective.seconds >= 0 ? formatClock(objective.seconds) : '';
-    const extra = this.q('gw-obj-extra');
-    extra.textContent = objective.extra ?? '';
-    extra.classList.toggle('gw-hidden', !objective.extra);
-    this.settingsObjective.textContent = `${objective.title} — ${objective.line}`;
+    if (clock !== this.lastClock) {
+      this.lastClock = clock;
+      this.objTimer.textContent = clock;
+    }
+  }
+
+  /** Pill on a phone, card on a desktop; expanded shows the card either way. */
+  private applyObjective() {
+    const mobile = this.root.dataset.layout !== 'desktop';
+    const has = Boolean(this.current);
+    // The centre announcement is the mission's first appearance; the pill is
+    // what it collapses into once that has gone.
+    const pillHidden = !has || !mobile || (this.announcing && !this.expanded);
+    const cardHidden = !has || (mobile && !this.expanded);
+    const state = `${pillHidden}${cardHidden}${this.expanded}`;
+    if (state === this.lastObjState) return;
+    this.lastObjState = state;
+    this.objPill.classList.toggle('gw-hidden', pillHidden);
+    this.objective.classList.toggle('gw-hidden', cardHidden);
+    this.objPill.setAttribute('aria-expanded', String(this.expanded));
+    // Coming back into view, the card may be holding stale text.
+    if (!cardHidden) this.lastCard = this.lastDistance = this.lastClock = '\u0000';
+  }
+
+  private expandObjective(on: boolean) {
+    this.expanded = on;
+    this.applyObjective();
+  }
+
+  /** The score lives in the top row on a phone, so it needs no panel. */
+  setScore(score: number) {
+    if (score === this.lastScore) return;
+    const up = this.lastScore >= 0 && score > this.lastScore;
+    this.lastScore = score;
+    this.scoreValue.textContent = score.toLocaleString('en-US');
+    if (!up) return;
+    this.scoreValue.classList.add('gw-up');
+    window.clearTimeout(this.scoreTimer);
+    this.scoreTimer = window.setTimeout(() => this.scoreValue.classList.remove('gw-up'), 520);
   }
 
   setRoster(players: RosterEntry[], crews: CrewRow[]) {
@@ -511,11 +631,31 @@ export class Overlay {
 
   /** Layout mode drives the CSS; the canvas drives the top inset. */
   setLayout(mode: 'desktop' | 'portrait' | 'landscape') {
+    if (this.root.dataset.layout === mode) return;
     this.root.dataset.layout = mode;
+    // Who owns the objective changes with the mode, so re-decide immediately.
+    this.applyObjective();
   }
 
   setTopInset(px: number) {
     this.root.style.setProperty('--gw-hud-top', `${px}px`);
+  }
+
+  /**
+   * Where the thumb stick's ring starts, so the invite button can sit just
+   * above it instead of guessing at a bottom offset.
+   */
+  setStickTop(px: number) {
+    if (px === this.lastStickTop) return;
+    this.lastStickTop = px;
+    this.root.style.setProperty('--gw-stick-top', `${px}px`);
+  }
+
+  /** The line the overlay column must stop above: the driving buttons. */
+  setControlsTop(px: number) {
+    if (px === this.lastControlsTop) return;
+    this.lastControlsTop = px;
+    this.root.style.setProperty('--gw-controls-top', `${px}px`);
   }
 
   /**
@@ -602,6 +742,15 @@ export class Overlay {
     toggle.textContent = muted ? 'OFF' : 'ON';
   }
 
+}
+
+/** One short line: what the mission is, and the single number that matters. */
+function pillLabel(objective: Objective): string {
+  if (objective.distance !== undefined) return `${objective.title} · ${Math.round(objective.distance)}M`;
+  if (objective.seconds !== undefined && objective.seconds >= 0) {
+    return `${objective.title} · ${formatClock(objective.seconds)}`;
+  }
+  return objective.title;
 }
 
 function formatClock(seconds: number): string {

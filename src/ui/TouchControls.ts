@@ -25,9 +25,14 @@ const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
 const DEADZONE = 0.16;
 
 /**
- * Getaway's own touch layout: a floating thumb stick on the left and labelled
- * pill buttons on the right. Deliberately not a D-pad or a ring of circular
- * icons — the shapes, wording and colours match the rest of this game's HUD.
+ * Getaway's own touch layout: a thumb stick parked in the lower-left corner
+ * and labelled pill buttons on the right. Deliberately not a D-pad or a ring
+ * of circular icons — the shapes, wording and colours match the rest of this
+ * game's HUD.
+ *
+ * The stick is drawn where it lives rather than appearing under a finger, so
+ * a first-time player can see what to hold; a drag that starts elsewhere on
+ * the left still picks it up, and the ring follows that finger until release.
  *
  * Pointers are read directly from Phaser's pointer list each frame, so several
  * fingers work at once (steer while accelerating while braking) without any
@@ -42,6 +47,9 @@ export class TouchControls {
   private stickId = -1;
   private originX = 0;
   private originY = 0;
+  /** Where the ring rests when nobody is holding it. */
+  private homeX = 0;
+  private homeY = 0;
   private radius = 60;
   private mode: ControlMode = 'foot';
   private enabled = false;
@@ -55,10 +63,11 @@ export class TouchControls {
     this.knob = scene.add.image(0, 0, 'stick-knob').setDepth(61).setVisible(false).setAlpha(0.8);
 
     this.hint = scene.add
-      .text(0, 0, 'DRAG TO MOVE', { fontFamily: MONO, fontSize: `${Math.round(11 * scale)}px`, color: '#5c6577' })
+      .text(0, 0, 'MOVE', { fontFamily: MONO, fontSize: `${Math.round(10 * scale)}px`, color: '#7d879b' })
       .setOrigin(0.5, 1)
       .setDepth(60)
       .setAlpha(0);
+    this.hint.setLetterSpacing?.(3 * scale);
 
     for (const spec of [
       { id: 'action' as ButtonId, label: 'ENTER', accent: 0x69d8ff },
@@ -101,8 +110,19 @@ export class TouchControls {
     return left;
   }
 
-  /** Top edge of the button cluster, so the HUD can stay clear of thumbs. */
+  /** Top edge of the controls, so the HUD can stay clear of thumbs. */
   get occludedTop(): number {
+    if (!this.enabled) return Number.POSITIVE_INFINITY;
+    let top = this.stickTop;
+    for (const b of this.buttons) {
+      if (!this.visible(b.id)) continue;
+      top = Math.min(top, b.y);
+    }
+    return top;
+  }
+
+  /** Top of the button cluster alone, which is what the DOM column runs into. */
+  get buttonsTop(): number {
     if (!this.enabled) return Number.POSITIVE_INFINITY;
     let top = Number.POSITIVE_INFINITY;
     for (const b of this.buttons) {
@@ -112,11 +132,19 @@ export class TouchControls {
     return top;
   }
 
+  /** Top of the resting ring, including its caption. */
+  get stickTop(): number {
+    if (!this.enabled) return Number.POSITIVE_INFINITY;
+    return this.homeY - this.radius - this.hint.height - 6 * this.scale;
+  }
+
   setEnabled(on: boolean) {
     if (this.enabled === on) return;
     this.enabled = on;
     if (!on) {
-      this.release();
+      this.stickId = -1;
+      resetTouchState();
+      this.publishButtons();
       this.base.setVisible(false);
       this.knob.setVisible(false);
       this.hint.setAlpha(0);
@@ -126,6 +154,7 @@ export class TouchControls {
       }
     } else {
       this.layout();
+      this.rest();
     }
     touchState.active = on;
   }
@@ -133,6 +162,8 @@ export class TouchControls {
   setMode(mode: ControlMode) {
     if (this.mode === mode) return;
     this.mode = mode;
+    // The stick steers in a car and walks on foot; say which.
+    this.hint.setText(mode === 'drive' ? 'STEER' : 'MOVE');
     this.release();
     this.layout();
   }
@@ -149,13 +180,20 @@ export class TouchControls {
     this.radius = clamp(unit * 0.15, 54 * s, 128 * s);
     this.base.setDisplaySize(this.radius * 2, this.radius * 2);
     this.knob.setDisplaySize(this.radius * 0.78, this.radius * 0.78);
-    this.hint.setPosition(this.radius + 24 * s, h - 14 * s);
 
     // Keep every control clear of the notch and the home indicator.
     const inset = safeAreaInsets();
     const base = clamp(unit * 0.045, 14 * s, 40 * s);
     const marginR = base + inset.right * s;
     const marginB = base + inset.bottom * s;
+    const marginL = base + inset.left * s;
+
+    // The stick has a home in the lower-left safe area and returns to it, so
+    // it is a control the player can see rather than a gesture they must know.
+    this.homeX = marginL + this.radius;
+    this.homeY = h - marginB - this.radius;
+    this.hint.setPosition(this.homeX, this.homeY - this.radius - 6 * s);
+    if (this.stickId < 0) this.rest();
     const gap = 10 * s;
     const b = clamp(unit * (portrait ? 0.2 : 0.17), 62 * s, 128 * s);
     const bigW = b * 1.45;
@@ -204,6 +242,16 @@ export class TouchControls {
       button.text.setPosition(button.x + button.w / 2, button.y + button.h / 2);
     }
     this.applyMode();
+  }
+
+  /** Ring and nub back in the corner, nub centred. */
+  private rest() {
+    this.originX = this.homeX;
+    this.originY = this.homeY;
+    const on = this.enabled;
+    this.base.setVisible(on).setPosition(this.homeX, this.homeY).setAlpha(0.42);
+    this.knob.setVisible(on).setPosition(this.homeX, this.homeY).setAlpha(0.72);
+    this.hint.setAlpha(on ? 0.75 : 0);
   }
 
   private applyMode() {
@@ -294,8 +342,11 @@ export class TouchControls {
         if (!p.isDown || p.x > stickZone || p.y < topGuard) continue;
         if (this.overButton(p)) continue;
         this.stickId = p.id;
-        this.originX = p.x;
-        this.originY = p.y;
+        // A thumb that lands on the ring uses the ring where it is; one that
+        // lands anywhere else on the left brings the ring with it.
+        const onRing = Math.hypot(p.x - this.homeX, p.y - this.homeY) <= this.radius * 1.3;
+        this.originX = onRing ? this.homeX : p.x;
+        this.originY = onRing ? this.homeY : p.y;
         stick = p;
         break;
       }
@@ -306,8 +357,8 @@ export class TouchControls {
       return;
     }
 
-    this.base.setVisible(true).setPosition(this.originX, this.originY);
-    this.knob.setVisible(true);
+    this.base.setVisible(true).setPosition(this.originX, this.originY).setAlpha(0.62);
+    this.knob.setVisible(true).setAlpha(0.95);
     this.hint.setAlpha(0);
 
     const dx = stick.x - this.originX;
@@ -351,8 +402,7 @@ export class TouchControls {
 
   private release() {
     this.stickId = -1;
-    this.base.setVisible(false);
-    this.knob.setVisible(false);
+    this.rest();
     resetTouchState();
     this.publishButtons();
   }

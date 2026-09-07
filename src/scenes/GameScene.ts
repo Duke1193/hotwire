@@ -1195,7 +1195,11 @@ export class GameScene extends Phaser.Scene {
     h.navActive = this.jobs.state !== 'off';
     h.navX = this.jobs.target.x;
     h.navY = this.jobs.target.y;
-    this.session?.overlay.setObjective(this.objectives.current);
+    // While the mission is still being announced in the centre of the screen
+    // the pill would only repeat it, so the overlay is told to hold it back.
+    const announcing =
+      this.objectives.announceMs > 0 && this.objectives.announcement?.title === this.objectives.current.title;
+    this.session?.overlay.setObjective(this.objectives.current, announcing);
   }
 
   private tyreFx() {
