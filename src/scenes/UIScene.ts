@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { HEAT } from '../config';
 import { TouchControls } from '../ui/TouchControls';
 import { hasTouch, RENDER_SCALE, safeAreaInsets, UI_SCALE } from '../util/device';
-import { hudTopInset, layout } from '../util/layout';
+import { heatBarWidth, heatRight, hudTopInset, layout } from '../util/layout';
 import { clamp, lerp } from '../util/math';
 import { GameScene } from './GameScene';
 
@@ -57,6 +57,7 @@ export class UIScene extends Phaser.Scene {
   private barWidth = 250;
   private lastInset = -1;
   private safeTop = 0;
+  private safeLeft = 0;
   /** Recomputed every frame: a phone shows less of this HUD than a desktop. */
   private compact = false;
   private showVitals = true;
@@ -134,6 +135,7 @@ export class UIScene extends Phaser.Scene {
     const h = this.scale.height;
     const inset = safeAreaInsets();
     this.safeTop = inset.top;
+    this.safeLeft = inset.left;
     const portrait = layout.mode === 'portrait';
 
     // Portrait is narrow and tall: pull the margins in and let the meters use
@@ -145,7 +147,7 @@ export class UIScene extends Phaser.Scene {
     this.region.bottom = h - (portrait ? 12 * S : 16 * S) - inset.bottom * RENDER_SCALE;
     this.region.cx = w / 2;
     this.region.cy = h / 2;
-    this.barWidth = portrait ? Math.min(210 * S, w * 0.54) : Math.min(250 * S, w * 0.34);
+    this.barWidth = heatBarWidth(layout.mode, w);
 
     this.vignette?.setDisplaySize(this.scale.width, this.scale.height);
     this.touch?.layout();
@@ -158,14 +160,14 @@ export class UIScene extends Phaser.Scene {
    * the meters the canvas draws. Measured from the real regions, not assumed.
    */
   /**
-   * Lets the DOM park the invite button just above the stick ring, and keeps
-   * the overlay column from ever growing down into the driving buttons.
+   * Tells the DOM where the canvas meters end — across, so the top-right
+   * utility stack can share the top band with HEAT, and down, so the column
+   * never grows into the driving buttons.
    */
-  private publishStickTop() {
+  private publishBounds() {
     const overlay = this.game_?.overlay;
     if (!overlay) return;
-    const stick = this.touch?.stickTop ?? Number.POSITIVE_INFINITY;
-    if (Number.isFinite(stick)) overlay.setStickTop(Math.round(stick / RENDER_SCALE));
+    overlay.setHeatRight(heatRight(layout.mode, this.safeLeft, this.scale.width));
     const buttons = this.touch?.buttonsTop ?? Number.POSITIVE_INFINITY;
     overlay.setControlsTop(
       Number.isFinite(buttons) ? Math.round(buttons / RENDER_SCALE) : Math.round(this.scale.height / RENDER_SCALE),
@@ -242,7 +244,7 @@ export class UIScene extends Phaser.Scene {
     if (!hasTouch) this.hint.setAlpha(clamp((this.introMs - 300) / 800, 0, 1) * 0.9);
 
     this.publishInset();
-    this.publishStickTop();
+    this.publishBounds();
     this.touch.setEnabled(hasTouch && hud.live);
     this.touch.setMode(hud.driving ? 'drive' : 'foot');
     this.touch.setArmed(Boolean(hud.weapon));

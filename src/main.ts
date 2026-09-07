@@ -7,7 +7,7 @@ import { bootSession } from './session';
 import { peekOverlay as getOverlay } from './ui/Overlay';
 import { Analytics, track } from './systems/Analytics';
 import { deviceType, hasTouch, isMobile, RENDER_SCALE, safeAreaInsets } from './util/device';
-import { hudTopInset, layout as gameLayout, setLayout } from './util/layout';
+import { heatRight, hudTopInset, layout as gameLayout, setLayout } from './util/layout';
 
 const parent = document.getElementById('game')!;
 
@@ -109,7 +109,9 @@ function fit() {
   setLayout(w, h);
   // Seed the column offset from the same formula the HUD publishes, so the
   // overlay is positioned correctly on the very first paint too.
-  root.setProperty('--gw-hud-top', `${hudTopInset(gameLayout.mode, safeAreaInsets().top)}px`);
+  const safe = safeAreaInsets();
+  root.setProperty('--gw-hud-top', `${hudTopInset(gameLayout.mode, safe.top)}px`);
+  root.setProperty('--gw-heat-right', `${heatRight(gameLayout.mode, safe.left, w * RENDER_SCALE)}px`);
   document.documentElement.dataset.layout = gameLayout.mode;
   getOverlay()?.setLayout(gameLayout.mode);
   game.scale.resize(w * RENDER_SCALE, h * RENDER_SCALE);

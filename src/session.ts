@@ -221,6 +221,7 @@ function finish(
   }
 
   overlay.onInvite = session.invite;
+  overlay.onCopyCode = () => copyText(room.code, () => overlay.flashCopyCode());
   overlay.setRoom(room.code, 1, 'offline');
   overlay.setPlayerInfo(identity.name, crew);
 
@@ -255,22 +256,7 @@ function shareInvite(room: RoomInfo, session: Session, overlay: Overlay, offline
     overlay.toast(offline ? 'INVITE LINK COPIED · MULTIPLAYER OFFLINE' : 'INVITE LINK COPIED');
   };
 
-  const fallback = () => {
-    const area = document.createElement('textarea');
-    area.value = url;
-    area.style.cssText = 'position:fixed;opacity:0';
-    document.body.appendChild(area);
-    area.select();
-    let ok = false;
-    try {
-      ok = document.execCommand('copy');
-    } catch {
-      ok = false;
-    }
-    area.remove();
-    if (ok) copied();
-    else overlay.toast(url, 8000);
-  };
+  const fallback = () => copyText(url, copied, () => overlay.toast(url, 8000));
 
   const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
   if (touch && navigator.share) {
@@ -285,11 +271,33 @@ function shareInvite(room: RoomInfo, session: Session, overlay: Overlay, offline
     return;
   }
 
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(url).then(copied, fallback);
-  } else {
-    fallback();
-  }
+  copyText(url, copied, () => overlay.toast(url, 8000));
+}
+
+/**
+ * One clipboard path for the invite link and the room code: the async API
+ * where it exists, a hidden textarea where it does not.
+ */
+function copyText(text: string, onCopied: () => void, onFail: () => void = () => {}) {
+  const legacy = () => {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    if (ok) onCopied();
+    else onFail();
+  };
+
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(onCopied, legacy);
+  else legacy();
 }
 
 export { getOverlay };

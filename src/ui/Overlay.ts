@@ -59,6 +59,7 @@ export class Overlay {
   onIdentityChange: ((name: string) => void) | null = null;
   onCrewChange: ((name: string, tag: string) => void) | null = null;
   onCrewLeave: (() => void) | null = null;
+  onCopyCode: (() => void) | null = null;
   onScoreboardOpen: (() => void) | null = null;
   onSettingsOpen: (() => void) | null = null;
 
@@ -82,6 +83,7 @@ export class Overlay {
   private crewRows!: HTMLDivElement;
   private objective!: HTMLDivElement;
   private objPill!: HTMLButtonElement;
+  private boardCode!: HTMLElement;
   private pillText!: HTMLElement;
   private scoreValue!: HTMLElement;
   private lastScore = -1;
@@ -99,7 +101,7 @@ export class Overlay {
   private objDistance!: HTMLElement;
   private objTimer!: HTMLElement;
   private objExtra!: HTMLElement;
-  private lastStickTop = -1;
+  private lastHeatRight = -1;
   private lastControlsTop = -1;
   private feed!: HTMLDivElement;
   private toasts!: HTMLDivElement;
@@ -133,13 +135,24 @@ export class Overlay {
     return `
       <div class="gw-column">
         <div class="gw-hud">
-          <div class="gw-chip" id="gw-room" data-status="offline" title="Scoreboard">
+          <div class="gw-chip" id="gw-room" data-status="offline" title="Room">
             <span class="gw-dot"></span><span id="gw-roomcode">ROOM ····</span><b id="gw-online">OFFLINE</b>
           </div>
           <button class="gw-btn" id="gw-invite">INVITE</button>
-          <div class="gw-chip gw-score" id="gw-score" title="Score"><span>SCORE</span><b id="gw-score-val">0</b></div>
           <button class="gw-icon" id="gw-sound" title="Sound"></button>
-          <button class="gw-icon" id="gw-settings-btn" title="Settings and help">☰</button>
+          <div class="gw-util">
+            <div class="gw-utilrow">
+              <div class="gw-score" id="gw-score" title="Score"><span>SCORE</span><b id="gw-score-val">0</b></div>
+              <button class="gw-icon" id="gw-settings-btn" title="Settings and help">☰</button>
+            </div>
+            <button class="gw-icon gw-invite-icon" id="gw-invite-mini" title="Invite a friend" aria-label="Invite a friend">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="9.5" cy="8" r="3.4" />
+                <path d="M3.4 19.2c0-3.3 2.7-5.6 6.1-5.6s6.1 2.3 6.1 5.6" />
+                <path d="M18.4 7.2v6.2M15.3 10.3h6.2" />
+              </svg>
+            </button>
+          </div>
         </div>
         <button class="gw-pill gw-hidden" id="gw-obj-pill" aria-expanded="false">
           <span class="gw-pill-dot"></span><span id="gw-pill-text">FREE ROAM</span>
@@ -152,6 +165,13 @@ export class Overlay {
         </div>
         <div class="gw-feed" id="gw-feed"></div>
       <div class="gw-panel gw-hidden" id="gw-board">
+        <div class="gw-board-head">
+          <div class="gw-board-code"><small>ROOM</small><span id="gw-board-code">····</span></div>
+          <div class="gw-board-acts">
+            <button class="gw-mini" id="gw-copy-code">COPY CODE</button>
+            <button class="gw-mini gw-mini-go" id="gw-board-invite">INVITE LINK</button>
+          </div>
+        </div>
         <h3>PLAYERS</h3>
         <div id="gw-player-rows"></div>
         <h3 class="gw-crews-head">CREWS</h3>
@@ -162,14 +182,6 @@ export class Overlay {
         </div>
       </div>
       </div>
-
-      <button class="gw-invite-mini" id="gw-invite-mini" title="Invite a friend" aria-label="Invite a friend">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle cx="9.5" cy="8" r="3.4" />
-          <path d="M3.4 19.2c0-3.3 2.7-5.6 6.1-5.6s6.1 2.3 6.1 5.6" />
-          <path d="M18.4 7.2v6.2M15.3 10.3h6.2" />
-        </svg>
-      </button>
 
       <div class="gw-toasts" id="gw-toasts"></div>
 
@@ -277,6 +289,7 @@ export class Overlay {
     this.crewRows = this.q('gw-crew-rows');
     this.objective = this.q('gw-objective');
     this.objPill = this.q('gw-obj-pill');
+    this.boardCode = this.q('gw-board-code');
     this.objTitle = this.q('gw-obj-title');
     this.objLine = this.q('gw-obj-line');
     this.objDistance = this.q('gw-obj-distance');
@@ -320,6 +333,8 @@ export class Overlay {
 
     this.inviteBtn.addEventListener('click', () => this.onInvite?.());
     this.q('gw-invite-mini').addEventListener('click', () => this.onInvite?.());
+    this.q('gw-board-invite').addEventListener('click', () => this.onInvite?.());
+    this.q('gw-copy-code').addEventListener('click', () => this.onCopyCode?.());
     this.objPill.addEventListener('click', () => this.expandObjective(this.objective.classList.contains('gw-hidden')));
     this.q('gw-settings-invite').addEventListener('click', () => this.onInvite?.());
     this.q('gw-nudge-invite').addEventListener('click', () => {
@@ -399,6 +414,7 @@ export class Overlay {
   setRoom(code: string, online: number, status: NetStatus) {
     this.roomLabel.textContent = `ROOM ${code}`;
     this.onlineLabel.textContent = status === 'offline' ? 'OFFLINE' : `${online} ONLINE`;
+    this.boardCode.textContent = code;
     this.roomChip.dataset.status = status;
     this.settingsRoom.textContent = status === 'offline' ? `${code} · SINGLE PLAYER` : `${code} · ${online} ONLINE`;
   }
@@ -584,6 +600,18 @@ export class Overlay {
     }, 2200);
   }
 
+  /** Brief confirmation on the room panel's copy button. */
+  flashCopyCode() {
+    const btn = this.q<HTMLButtonElement>('gw-copy-code');
+    if (btn.classList.contains('gw-copied')) return;
+    btn.classList.add('gw-copied');
+    btn.textContent = 'CODE COPIED';
+    window.setTimeout(() => {
+      btn.classList.remove('gw-copied');
+      btn.textContent = 'COPY CODE';
+    }, 2200);
+  }
+
   showNudge(text: string) {
     this.nudgeText.textContent = text;
     this.nudge.classList.remove('gw-hidden');
@@ -642,13 +670,13 @@ export class Overlay {
   }
 
   /**
-   * Where the thumb stick's ring starts, so the invite button can sit just
-   * above it instead of guessing at a bottom offset.
+   * Where the canvas HEAT meter ends, so the top-right utility stack can use
+   * exactly the width left over instead of being pushed below the meters.
    */
-  setStickTop(px: number) {
-    if (px === this.lastStickTop) return;
-    this.lastStickTop = px;
-    this.root.style.setProperty('--gw-stick-top', `${px}px`);
+  setHeatRight(px: number) {
+    if (px === this.lastHeatRight) return;
+    this.lastHeatRight = px;
+    this.root.style.setProperty('--gw-heat-right', `${px}px`);
   }
 
   /** The line the overlay column must stop above: the driving buttons. */

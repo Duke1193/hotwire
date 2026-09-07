@@ -48,9 +48,10 @@
 }
 
 /*
- * PORTRAIT: the column spans the width and starts below the meters the canvas
- * draws (--gw-hud-top is measured and published by the HUD itself), so the
- * objective card can never sit on the HEAT bar or on the thumb controls.
+ * PORTRAIT: HEAT is the only thing the canvas draws across the top now, so the
+ * utility row shares that band with it — lifted out of the column and pinned
+ * to the corner, starting where the meter ends (--gw-heat-right, published by
+ * the HUD). Everything else in the column stays below the meters.
  */
 .gw-root[data-layout='portrait'] .gw-column {
   top: calc(var(--gw-hud-top, 120px) + 6px);
@@ -61,7 +62,13 @@
 }
 
 .gw-root[data-layout='portrait'] .gw-hud {
-  justify-content: flex-start;
+  position: fixed;
+  top: calc(9px + env(safe-area-inset-top, 0px));
+  right: calc(10px + env(safe-area-inset-right, 0px));
+  left: calc(var(--gw-heat-right, 45%) + 10px);
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 7px;
 }
 
 .gw-root[data-layout='portrait'] .gw-objective {
@@ -110,8 +117,12 @@
   flex: 0 0 auto;
 }
 
-/* The expanded card is the one thing that gives when the column runs short. */
-.gw-column > .gw-objective {
+/*
+ * The expanded card and the room panel are what give when the column runs
+ * short — they scroll inside it rather than reaching the driving buttons.
+ */
+.gw-column > .gw-objective,
+.gw-column > .gw-panel {
   flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -124,6 +135,35 @@
   justify-content: flex-end;
   align-items: center;
   gap: 6px;
+}
+
+/*
+ * On a phone the corner carries the whole utility stack: score and menu on one
+ * line, invite directly under the menu. On a desktop the wrappers dissolve and
+ * the row is exactly what it always was.
+ */
+.gw-util {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.gw-utilrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gw-util > *,
+.gw-utilrow > * {
+  pointer-events: auto;
+}
+
+.gw-root[data-layout='desktop'] .gw-util,
+.gw-root[data-layout='desktop'] .gw-utilrow {
+  display: contents;
 }
 
 .gw-chip,
@@ -189,20 +229,30 @@
 /* --------------------------------------------------------- score chip */
 
 /*
- * On a phone the score rides in the top row instead of taking a panel of its
- * own on the left, which is the single biggest thing the play area gets back.
+ * Status text, not a control: no border, the lightest plate that still reads
+ * over a bright street, and a flash on the number when it goes up.
  */
 .gw-score {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   flex: none;
-  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  background: rgba(8, 10, 15, 0.42);
+  font-size: 10px;
+  letter-spacing: 1px;
+  line-height: 1;
   color: var(--gw-dim);
   font-variant-numeric: tabular-nums;
   cursor: default;
+  white-space: nowrap;
 }
 
 .gw-score b {
-  margin-left: 0;
-  transition: color 0.25s;
+  font-weight: 500;
+  color: var(--gw-ink);
+  transition: color 0.3s;
 }
 
 .gw-score b.gw-up { color: #7ee0a1; transition: none; }
@@ -216,19 +266,23 @@
  * The collapsed objective. A new mission is announced in the centre of the
  * screen for a moment; what stays behind is this one line. Tapping it puts
  * the full card back.
+ *
+ * Scoped through .gw-root because the button reset above sets `font`, which
+ * beats a bare class selector and would otherwise blow the type back up.
  */
-.gw-pill {
+.gw-root .gw-pill {
   display: none;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   align-self: flex-start;
-  max-width: 100%;
-  background: var(--gw-panel);
-  border: 1px solid var(--gw-line);
-  border-radius: 999px;
-  padding: 6px 12px 6px 9px;
-  font-size: 11px;
-  letter-spacing: 1.4px;
+  /* Never a banner: one short line, and it gives up characters before width. */
+  max-width: min(66%, 250px);
+  background: rgba(8, 10, 15, 0.5);
+  border: 0;
+  border-radius: 5px;
+  padding: 5px 9px;
+  font-size: 10px;
+  letter-spacing: 1.2px;
   line-height: 1;
   color: var(--gw-ink);
   cursor: pointer;
@@ -238,9 +292,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+.gw-pill #gw-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .gw-pill .gw-pill-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--gw-accent);
   flex: none;
@@ -251,7 +310,7 @@
 .gw-pill[data-kind='pursuit'] .gw-pill-dot { background: #ff4d3d; }
 .gw-pill[data-kind='free'] .gw-pill-dot { background: #4a5470; }
 
-.gw-pill[aria-expanded='true'] { border-color: var(--gw-accent); }
+.gw-pill[aria-expanded='true'] { background: rgba(105, 216, 255, 0.16); }
 
 .gw-root:not([data-layout='desktop']) .gw-pill:not(.gw-hidden) {
   display: flex;
@@ -264,33 +323,25 @@
   to { opacity: 1; transform: none; }
 }
 
-/* --------------------------------------------------- thumb invite button */
+/* ------------------------------------------------------- corner utilities */
 
 /*
- * Invite belongs where the thumb already is, not in the top row. It is parked
- * just above the stick ring, using the position the stick itself publishes.
+ * Invite sits under the menu in the same visual family: same size, same
+ * radius, same weight, one step quieter. It is never labelled on a phone.
  */
-.gw-invite-mini {
-  position: absolute;
-  left: calc(12px + env(safe-area-inset-left, 0px));
-  top: calc(var(--gw-stick-top, 70%) - 48px);
+.gw-invite-icon {
   display: none;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  height: 26px;
   padding: 0;
-  background: var(--gw-panel);
-  border: 1px solid #2c5b73;
-  border-radius: 50%;
   color: var(--gw-accent);
-  cursor: pointer;
-  pointer-events: auto;
+  border-color: #2c5b73;
 }
 
-.gw-invite-mini svg {
-  width: 19px;
-  height: 19px;
+.gw-invite-icon svg {
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
@@ -298,14 +349,63 @@
   stroke-linejoin: round;
 }
 
-.gw-invite-mini:active { background: rgba(105, 216, 255, 0.18); }
+.gw-invite-icon:active { background: rgba(105, 216, 255, 0.2); }
 
-.gw-root:not([data-layout='desktop']) .gw-invite-mini { display: flex; }
+.gw-root:not([data-layout='desktop']) .gw-invite-icon { display: flex; }
 
-/* Top row on a phone: room status, score, menu. Nothing else. */
+/*
+ * A phone's permanent HUD says four things: danger, who is here, the score,
+ * and where the utilities are. Everything below trims those four down to the
+ * least chrome that still reads over a lit street.
+ */
 .gw-root:not([data-layout='desktop']) #gw-invite,
-.gw-root:not([data-layout='desktop']) #gw-sound {
+.gw-root:not([data-layout='desktop']) #gw-sound,
+.gw-root:not([data-layout='desktop']) #gw-roomcode {
   display: none;
+}
+
+.gw-root:not([data-layout='desktop']) .gw-hud {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.gw-root:not([data-layout='desktop']) .gw-chip,
+.gw-root:not([data-layout='desktop']) .gw-icon {
+  background: rgba(8, 10, 15, 0.42);
+  border-color: transparent;
+  border-radius: 5px;
+  padding: 4px 7px;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+}
+
+.gw-root:not([data-layout='desktop']) .gw-icon {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(57, 65, 90, 0.85);
+  line-height: 1;
+}
+
+/* Only what is left of ROOM ···· : the dot and the head count. */
+.gw-root:not([data-layout='desktop']) .gw-chip#gw-room {
+  flex: 0 1 auto;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.gw-root:not([data-layout='desktop']) .gw-chip#gw-room b {
+  margin-left: 0;
+  color: var(--gw-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Under about 360px the word gives way before the layout does. */
+@media (max-width: 360px) {
+  .gw-root[data-layout='portrait'] .gw-score span { display: none; }
 }
 
 /* ----------------------------------------------------------- objective */
@@ -359,6 +459,65 @@
   color: var(--gw-ink);
   white-space: pre-line;
 }
+
+/*
+ * The room panel's head. The room code lives here rather than in the HUD, so
+ * a phone shows who is present and nothing about how the room is addressed
+ * until it is asked.
+ */
+.gw-board-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--gw-line);
+}
+
+.gw-board-code {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.gw-board-code small {
+  font-size: 9px;
+  letter-spacing: 2.2px;
+  color: var(--gw-dim);
+}
+
+.gw-board-code span {
+  font-size: 15px;
+  letter-spacing: 3px;
+  color: var(--gw-ink);
+}
+
+.gw-board-acts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.gw-root .gw-mini {
+  background: transparent;
+  border: 1px solid var(--gw-line);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  line-height: 1;
+  color: var(--gw-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gw-mini-go { color: var(--gw-accent); border-color: #2c5b73; }
+.gw-mini.gw-copied { color: #4bd07a; border-color: #2f6b46; }
+
+/* Desktop already shows the code in the HUD and INVITE in the top row. */
+.gw-root[data-layout='desktop'] .gw-board-head { display: none; }
 
 /* ---------------------------------------------------------- kill feed */
 

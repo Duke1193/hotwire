@@ -34,6 +34,26 @@ export function hudTopInset(mode: LayoutMode, safeTop: number): number {
   return Math.round(((marginUnits + meterUnits) * UI_SCALE) / RENDER_SCALE + safeTop);
 }
 
+/**
+ * How wide the HEAT meter is drawn, in canvas units. Portrait shares the top
+ * band with the utility stack, so the meter there takes only what it needs.
+ */
+export function heatBarWidth(mode: LayoutMode, canvasWidth: number): number {
+  return mode === 'portrait'
+    ? Math.min(124 * UI_SCALE, canvasWidth * 0.34)
+    : Math.min(250 * UI_SCALE, canvasWidth * 0.34);
+}
+
+/**
+ * Where the HEAT block ends across, in CSS pixels: the plate plus the three
+ * level pips outside it. The DOM top-right stack starts from this, so the two
+ * can share the top band without either one guessing at the other's size.
+ */
+export function heatRight(mode: LayoutMode, safeLeft: number, canvasWidth: number): number {
+  const left = 12 * UI_SCALE + safeLeft * RENDER_SCALE;
+  return Math.round((left + heatBarWidth(mode, canvasWidth) + 34 * UI_SCALE) / RENDER_SCALE);
+}
+
 export function modeFor(width: number, height: number): LayoutMode {
   if (!hasTouch) return 'desktop';
   return height >= width ? 'portrait' : 'landscape';

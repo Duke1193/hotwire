@@ -52,16 +52,29 @@ kill feed steps aside and `KM/H` moves next to the driving buttons so `EXIT`
 never lands behind the objective card.
 
 A phone gets a shorter HUD than a desktop, because the point of a phone screen
-is the street on it. The top-left is the HEAT meter and nothing else. The top
-right is one compact row — room status, score, menu. Invite moves to a small
-icon button above the stick, where the thumb already is. Everything that is
-only sometimes true is drawn only while it is true: the pursuit line, health
-and armour, the speed, the weapon. A new mission arrives as the centre
-announcement and then settles into a one-line pill — `HOT DELIVERY · 95M` —
-which expands back to the full card on a tap, or in settings. The column stops
-above the driving buttons at a line the controls publish, so an expanded card
-on a short landscape phone scrolls inside its column instead of sitting on
-`GO`. Desktop is untouched by all of this and keeps the full HUD.
+is the street on it. The permanent HUD says four things and no more: danger,
+who is here, the score, and where the utilities are.
+
+HEAT sits alone in the top-left, narrowed so the utility stack can share the
+same band — the canvas publishes where the meter ends (`--gw-heat-right`) and
+the DOM row starts there. `1 ONLINE` sits to its right; the score and the menu
+hold the corner; invite is an icon directly under the menu, no label. The room
+code is not on screen at all: tapping `1 ONLINE` opens the room panel, which
+carries the code, copy code, invite link, who is present, crews and the room
+actions. Everything that is only sometimes true is drawn only while it is
+true: the pursuit line, health and armour, the speed, the weapon.
+
+A new mission arrives as the centre announcement and then settles into a
+one-line pill — `HOT DELIVERY · 95M` — below the top row, capped at two thirds
+of the width and expanded to the full card on a tap, or read in settings. The
+column stops above the driving buttons at a line the controls publish
+(`--gw-controls-top`), so an expanded card or an open room panel on a short
+landscape phone scrolls inside its column instead of sitting on `GO`.
+
+Chips are the lightest thing that still reads over a lit street: no borders
+except on the icon buttons, one 5px radius, 10px type, translucent plates.
+Measured at 375×812, the permanent HUD covers 4.0% of the screen. Desktop
+keeps the full HUD and is untouched by all of it.
 
 The visible viewport is the only size we trust. `window.visualViewport` (its
 `resize` **and** `scroll` events), a `ResizeObserver`, `orientationchange`,
